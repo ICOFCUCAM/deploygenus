@@ -247,3 +247,47 @@ the platform's own database is on.
 Workers get no such treatment: they are always on, so capturing their output
 the same way would mean an unbounded, permanently-growing log table. Their
 output stays in the container log, where Docker's rotation already applies.
+
+## Volumes belong to the project, and are never deleted by Forge
+
+Forge used to assume every app was stateless. That is true of websites and
+false of anything that records, uploads or renders, and those apps lose all
+their data on the next deploy. A volume is named after the project
+(`forge_<slug>_<name>`), not a deployment, because the point is that
+deployment 14 and deployment 15 see the same files.
+
+The separator is an underscore because neither a slug nor a volume name can
+contain one. With a hyphen, project `a-b` with volume `c` and project `a` with
+volume `b-c` would share a volume.
+
+Volumes are mounted with `--mount type=volume`, never `-v`. With `-v`, a value
+that looks like a path is treated as a host directory, so a mistake could
+bind-mount part of the host into a container. `--mount` refuses to do that.
+
+Production only, as with workers and secrets. A preview writing into the
+production recordings directory would be the same mistake as a preview holding
+the production database password.
+
+Removing a volume, or deleting a project, removes the configuration and leaves
+the data. Deleting data is the one operation with no rollback, so it is never a
+side effect. It takes a person typing `docker volume rm`.
+
+## Replacing a container drains it; it does not wait for it
+
+A stop timeout is only useful if it can be long. A render can take twenty
+minutes. But `docker stop --time 1200` blocks for up to twenty minutes, and it
+runs inside a promotion: on the deploy loop, or inside the HTTP request of a
+rollback. A long timeout would stall every deploy on the host.
+
+So the old container is renamed to `<name>.draining.<deadline>`, its restart
+policy is cleared, and it is sent its stop signal. The rename frees its name,
+so the replacement starts immediately. The deadline is part of the new name, so
+enforcing it needs no database row and no timer that has to survive a restart.
+Any worker that lists containers later can read the deadline and remove the
+container once it has exited, or kill it once the deadline passes.
+
+Previously, a worker being replaced was force-removed by `run_worker` before
+its successor started, with no grace period at all. Draining changes that for
+every project, not only for ones that raise the timeout: with the default
+10 seconds, a worker now gets the same 10 seconds `docker stop` would give it.
+

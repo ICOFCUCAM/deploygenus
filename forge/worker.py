@@ -213,6 +213,23 @@ class Worker:
         for run in await process_repo.reclaim_abandoned_runs(older_than_seconds=7200):
             logger.warning("failed abandoned job run %s", run.id)
 
+        # Replaced containers finishing their work. Checked here, on the same
+        # minute-ish cadence, because a deadline is a stop timeout — seconds to
+        # hours — and a container killed up to a minute late has lost nothing.
+        try:
+            finished, killed = await service.sweep_draining()
+        except Exception:
+            logger.exception("draining sweep failed")
+        else:
+            if finished:
+                logger.info("removed %s container(s) that finished draining", finished)
+            if killed:
+                logger.warning(
+                    "killed %s container(s) still running at the end of their "
+                    "stop timeout",
+                    killed,
+                )
+
     async def _idle(self) -> None:
         """Sleep, but wake immediately on shutdown.
 

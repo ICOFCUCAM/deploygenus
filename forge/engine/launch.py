@@ -16,9 +16,10 @@ from forge.domain import naming
 from forge.domain.buildplan import DEFAULT_PORT
 from forge.domain.errors import Conflict, DeployFailed
 from forge.domain.models import Deployment, EnvTarget, LogStream, Project
-from forge.engine import environment, health
+from forge.engine import environment, health, storage
 from forge.engine.logs import LogWriter
 from forge.repositories import deployments as deployment_repo
+from forge.repositories import volumes as volume_repo
 
 
 async def launch(
@@ -73,6 +74,15 @@ async def launch(
         f"variable{'' if len(env) == 1 else 's'}"
     )
 
+    mounts = await storage.mounts_for(project, target=target)
+    if mounts:
+        await log.system(f"mounting {storage.describe(mounts)}")
+    elif target is EnvTarget.PREVIEW and await volume_repo.list_for_project(project.id):
+        await log.system(
+            "this is a preview, so the project's volumes are not mounted — "
+            "anything it writes is discarded with its container"
+        )
+
     spec = containers.RunSpec(
         image=deployment.image_tag,
         name=name,
@@ -83,6 +93,8 @@ async def launch(
         memory_mb=project.memory_mb,
         cpu_shares=project.cpu_shares,
         cert_resolver=settings.cert_resolver,
+        stop_timeout=project.stop_timeout_seconds,
+        volumes=mounts,
         env_file=env_file,
         inline_env=env.inline,
         labels={

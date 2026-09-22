@@ -1,4 +1,4 @@
-"""Projects, their environment variables and their domains."""
+"""Projects, their environment variables, domains and volumes."""
 
 from __future__ import annotations
 
@@ -10,16 +10,20 @@ from forge.domain import naming
 from forge.domain.errors import InvalidRequest, NotFound
 from forge.domain.models import EnvTarget
 from forge.domain.repo_url import validate_repo_url
+from forge.domain.storage import normalise_mount_path, validate_volume_name
 from forge.engine import routing, verify
 from forge.repositories import projects as project_repo
+from forge.repositories import volumes as volume_repo
 from forge.routers.schemas import (
     AddDomain,
+    AddVolume,
     CreateProject,
     DomainOut,
     EnvOut,
     ProjectOut,
     SetEnv,
     UpdateProject,
+    VolumeOut,
 )
 
 router = APIRouter(
@@ -177,4 +181,37 @@ async def remove_domain(
     if not removed:
         raise NotFound(f"{host} is not attached to this project")
     await routing.refresh(await project_repo.get(project.id), settings=settings)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Volumes
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{project_ref}/volumes")
+async def list_volumes(project: ProjectDep) -> list[VolumeOut]:
+    return [
+        VolumeOut.of(v, project_slug=project.slug)
+        for v in await volume_repo.list_for_project(project.id)
+    ]
+
+
+@router.post("/{project_ref}/volumes", status_code=status.HTTP_201_CREATED)
+async def add_volume(project: ProjectDep, body: AddVolume) -> VolumeOut:
+    """Configure a volume. It is mounted from the next production deploy."""
+    volume = await volume_repo.create(
+        project_id=project.id,
+        name=validate_volume_name(body.name),
+        mount_path=normalise_mount_path(body.mount_path),
+    )
+    return VolumeOut.of(volume, project_slug=project.slug)
+
+
+@router.delete("/{project_ref}/volumes/{name}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_volume(project: ProjectDep, name: str) -> Response:
+    """Stop mounting a volume. The data stays in Docker until an operator
+    removes it — an API call that deleted a project's recordings would be one
+    mistyped name away from an incident with no undo."""
+    await volume_repo.delete(project.id, name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

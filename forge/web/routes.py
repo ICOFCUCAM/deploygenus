@@ -34,6 +34,11 @@ from forge.domain.models import (
 )
 from forge.domain.repo_url import validate_repo_url
 from forge.domain.schedule import InvalidSchedule, describe, parse
+from forge.domain.storage import (
+    docker_volume_name,
+    normalise_mount_path,
+    validate_volume_name,
+)
 from forge.engine import processes as process_engine
 from forge.engine import promote as promote_engine
 from forge.engine import routing, service, verify
@@ -41,6 +46,7 @@ from forge.engine.logs import LogWriter
 from forge.repositories import deployments as deployment_repo
 from forge.repositories import processes as process_repo
 from forge.repositories import projects as project_repo
+from forge.repositories import volumes as volume_repo
 
 HERE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
@@ -188,6 +194,10 @@ async def project_page(
                 for process in await process_repo.list_for_project(project.id)
             ],
             "domains": domains,
+            "volumes": [
+                (volume, docker_volume_name(project.slug, volume.name))
+                for volume in await volume_repo.list_for_project(project.id)
+            ],
             "deploy_domain": settings.deploy_domain,
             "webhook_url": (
                 f"{settings.scheme}://forge.{settings.deploy_domain}"
@@ -222,6 +232,7 @@ async def save_settings(
     start_command: Annotated[str, Form()] = "",
     memory_mb: Annotated[str, Form()] = "",
     keep_warm: Annotated[str, Form()] = "",
+    stop_timeout_seconds: Annotated[str, Form()] = "",
 ):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
@@ -231,6 +242,9 @@ async def save_settings(
         "root_directory": root_directory.strip(),
         "memory_mb": _int(memory_mb, project.memory_mb),
         "keep_warm": _int(keep_warm, project.keep_warm),
+        "stop_timeout_seconds": min(
+            max(_int(stop_timeout_seconds, project.stop_timeout_seconds), 1), 86400
+        ),
     }
     # An empty override means "go back to detecting it", which is a real
     # setting and not a missing field — so these are written as NULL rather
@@ -328,6 +342,45 @@ async def add_domain(
     return _redirect(
         f"/projects/{slug}",
         ok=f"Added {cleaned}. Point its DNS here, then verify it.",
+    )
+
+
+@router.post("/projects/{slug}/volumes")
+async def add_volume(
+    request: Request,
+    slug: str,
+    name: Annotated[str, Form()],
+    mount_path: Annotated[str, Form()],
+):
+    signed_in(request)
+    project = await project_repo.get_by_slug(slug)
+    try:
+        volume = await volume_repo.create(
+            project_id=project.id,
+            name=validate_volume_name(name),
+            mount_path=normalise_mount_path(mount_path),
+        )
+    except ForgeError as exc:
+        return _redirect(f"/projects/{slug}", err=exc.message)
+    return _redirect(
+        f"/projects/{slug}",
+        ok=f"Added {volume.name} at {volume.mount_path}. It is mounted from the "
+        "next deploy.",
+    )
+
+
+@router.post("/projects/{slug}/volumes/{name}/delete")
+async def remove_volume(request: Request, slug: str, name: str):
+    signed_in(request)
+    project = await project_repo.get_by_slug(slug)
+    try:
+        volume = await volume_repo.delete(project.id, name)
+    except ForgeError as exc:
+        return _redirect(f"/projects/{slug}", err=exc.message)
+    return _redirect(
+        f"/projects/{slug}",
+        ok=f"{volume.name} is no longer mounted from the next deploy. Its data is "
+        f"kept in Docker volume {docker_volume_name(project.slug, volume.name)}.",
     )
 
 

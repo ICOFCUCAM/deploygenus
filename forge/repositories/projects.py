@@ -14,7 +14,8 @@ from forge.repositories.rows import to_domain, to_env_var, to_project
 PROJECT_COLUMNS = """
     id, slug, name, repo_url, production_branch, root_directory,
     framework, install_command, build_command, start_command, port,
-    memory_mb, cpu_shares, keep_warm, production_deployment_id,
+    memory_mb, cpu_shares, keep_warm, stop_timeout_seconds,
+    production_deployment_id,
     webhook_secret, created_at, updated_at
 """
 
@@ -125,6 +126,7 @@ UPDATABLE = frozenset(
         "memory_mb",
         "cpu_shares",
         "keep_warm",
+        "stop_timeout_seconds",
     }
 )
 

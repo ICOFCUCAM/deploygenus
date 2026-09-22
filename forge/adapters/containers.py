@@ -17,9 +17,12 @@ import contextlib
 import json
 import os
 import shlex
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from forge.domain.storage import Mount, draining_deadline, draining_name
 
 LogSink = Callable[[str], Awaitable[None]]
 
@@ -54,6 +57,11 @@ class RunSpec:
     #: newline. Passed as arguments instead. See forge.engine.environment.
     inline_env: dict[str, str] = field(default_factory=dict)
     labels: dict[str, str] = field(default_factory=dict)
+    volumes: tuple[Mount, ...] = ()
+    #: Seconds between the stop signal and SIGKILL. Set on the container
+    #: itself, so it holds for stops Forge never issues — a daemon restart, a
+    #: host shutdown, an operator's `docker stop`.
+    stop_timeout: int = 10
 
 
 async def build(
@@ -150,6 +158,8 @@ async def run(spec: RunSpec, *, log: LogSink | None = None) -> str:
         "--log-opt",
         "max-file=3",
         f"--env=PORT={spec.port}",
+        f"--stop-timeout={spec.stop_timeout}",
+        *_mount_args(spec.volumes),
     ]
     for key, value in labels.items():
         args += ["--label", f"{key}={value}"]
@@ -167,9 +177,17 @@ async def run(spec: RunSpec, *, log: LogSink | None = None) -> str:
 
 
 async def stop(container_id: str, *, timeout: int = 10) -> None:
-    """Stop a container, tolerating one that is already gone."""
+    """Stop a container, tolerating one that is already gone.
+
+    Blocks for up to `timeout`. Anything replacing a container during a deploy
+    uses `drain` instead, which does not.
+    """
     try:
-        await _capture(["stop", "--time", str(timeout), container_id])
+        # The subprocess bound has to outlast the grace period, or a container
+        # that takes its full allowance reads as a hung Docker daemon.
+        await _capture(
+            ["stop", "--time", str(timeout), container_id], timeout=timeout + 60
+        )
     except DockerError as exc:
         if "No such container" not in str(exc):
             raise
@@ -226,6 +244,118 @@ async def logs(container_id: str, *, tail: int = 200) -> str:
         return await _capture(["logs", "--tail", str(tail), container_id])
     except DockerError as exc:
         return f"(could not read container logs: {exc})"
+
+
+def _mount_args(mounts: tuple[Mount, ...]) -> list[str]:
+    """`--mount` rather than `-v`: it refuses a volume name it does not
+    recognise as one instead of treating it as a host path, so a typo cannot
+    quietly bind-mount a directory of the host into a container."""
+    args: list[str] = []
+    for mount in mounts:
+        args += ["--mount", f"type=volume,src={mount.volume},dst={mount.path}"]
+    return args
+
+
+async def ensure_volume(name: str, *, labels: dict[str, str]) -> bool:
+    """Create a named volume if it does not exist. True if it was created.
+
+    Created explicitly, before the first container that mounts it, so it
+    carries Forge's labels — a volume Docker creates implicitly on `run` has
+    none, and `forge doctor` could not tell it from one somebody made by hand.
+    """
+    try:
+        await _capture(["volume", "inspect", name])
+        return False
+    except DockerError:
+        pass
+    args = ["volume", "create"]
+    for key, value in labels.items():
+        args += ["--label", f"{key}={value}"]
+    await _capture([*args, name])
+    return True
+
+
+async def list_owned_volumes() -> list[str]:
+    """Every volume Forge created, including ones no project mounts any more."""
+    out = await _capture(
+        [
+            "volume",
+            "ls",
+            "--filter",
+            f"label={OWNER_LABEL}={OWNER_VALUE}",
+            "--format",
+            "{{.Name}}",
+        ]
+    )
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+async def drain(name_or_id: str, *, grace: int, now: float | None = None) -> None:
+    """Ask a container to stop, and return without waiting for it to.
+
+    The container is renamed out of the way first, which frees its name for a
+    successor that can start immediately, and its restart policy is cleared so
+    Docker does not bring it back when it exits. It then gets the stop signal
+    and `grace` seconds to finish what it is doing; `sweep_draining` removes it
+    once it has exited, or kills it once the deadline in its new name passes.
+
+    This is what makes a long stop timeout affordable. Waiting in line instead
+    would hold a deploy — or an HTTP request for a rollback — for as long as
+    the slowest worker takes to finish a render.
+    """
+    deadline = int((now if now is not None else time.time()) + grace)
+    template = (
+        '{"id": {{json .Id}}, "name": {{json .Name}}, '
+        '"running": {{json .State.Running}}, "signal": {{json .Config.StopSignal}}}'
+    )
+    try:
+        info = json.loads(await _capture(["inspect", "--format", template, name_or_id]))
+    except DockerError as exc:
+        if "No such" in str(exc):
+            return
+        raise
+    # By id from here on: the name is about to change, and the old one may
+    # belong to the successor a moment later.
+    container_id = info["id"]
+    current = info["name"].lstrip("/")
+
+    if not info["running"]:
+        await remove(container_id, force=True)
+        return
+
+    if draining_deadline(current) is None:
+        await _capture(
+            ["rename", container_id, draining_name(current, deadline=deadline)]
+        )
+    await _capture(["update", "--restart=no", container_id])
+    try:
+        await _capture(["kill", "--signal", info["signal"] or "SIGTERM", container_id])
+    except DockerError as exc:
+        # Exited between the inspect and the signal: nothing left to ask.
+        if "is not running" not in str(exc) and "No such" not in str(exc):
+            raise
+        await remove(container_id, force=True)
+
+
+async def sweep_draining(*, now: float | None = None) -> tuple[int, int]:
+    """Remove draining containers that finished; kill ones out of time.
+
+    Returns (finished, killed).
+    """
+    moment = now if now is not None else time.time()
+    finished = killed = 0
+    for container in await list_owned():
+        name = container.get("Names", "")
+        deadline = draining_deadline(name)
+        if deadline is None:
+            continue
+        if container.get("State") != "running":
+            await remove(name, force=True)
+            finished += 1
+        elif moment >= deadline:
+            await remove(name, force=True)
+            killed += 1
+    return finished, killed
 
 
 async def ensure_network(name: str) -> None:
@@ -367,6 +497,8 @@ class TaskSpec:
     env_file: Path | None = None
     inline_env: dict[str, str] = field(default_factory=dict)
     labels: dict[str, str] = field(default_factory=dict)
+    volumes: tuple[Mount, ...] = ()
+    stop_timeout: int = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,6 +537,8 @@ def _process_args(spec: TaskSpec) -> list[str]:
         "--pids-limit=512",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
+        f"--stop-timeout={spec.stop_timeout}",
+        *_mount_args(spec.volumes),
     ]
     for key, value in spec.labels.items():
         args += ["--label", f"{key}={value}"]
@@ -520,4 +654,11 @@ async def list_process_containers(project_slug: str) -> list[str]:
             f"label={ROLE_LABEL}=worker",
         ]
     )
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    # A draining container still carries the worker's labels, but it is on
+    # its way out and no longer holds its old name. Counting it would make
+    # every promotion drain it again and restart its clock.
+    return [
+        name
+        for name in (line.strip() for line in out.splitlines())
+        if name and draining_deadline(name) is None
+    ]

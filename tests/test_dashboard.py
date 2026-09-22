@@ -61,6 +61,7 @@ def repos(monkeypatch):
         ],
         "env": [fakes.env_var("DATABASE_URL"), fakes.env_var("STRIPE_KEY")],
         "processes": [fakes.process(), fakes.cron()],
+        "volumes": [fakes.volume()],
         "runs": [
             fakes.job_run(),
             fakes.job_run(
@@ -111,6 +112,10 @@ def repos(monkeypatch):
     )
     monkeypatch.setattr(
         "forge.web.routes.project_repo.list_env", lambda _id: _async(state["env"])
+    )
+    monkeypatch.setattr(
+        "forge.web.routes.volume_repo.list_for_project",
+        lambda _id: _async(state["volumes"]),
     )
     monkeypatch.setattr("forge.web.routes.deployment_repo.get", dep_get)
     monkeypatch.setattr("forge.web.routes.deployment_repo.get_by_short_id", dep_by_short)
@@ -323,6 +328,14 @@ class TestProcesses:
         response = await client.get("/projects/blog/processes/nightly")
         assert "<img src=x" not in response.text
         assert "&lt;img src=x" in response.text
+
+    async def test_the_project_page_lists_volumes_with_their_docker_names(
+        self, client, repos
+    ):
+        body = (await client.get("/projects/blog")).text
+        assert "/data" in body
+        assert "forge_blog_recordings" in body
+        assert "Stop timeout" in body
 
     async def test_a_worker_page_says_where_its_output_goes(self, client, repos):
         """Workers stream to the container log rather than the database —

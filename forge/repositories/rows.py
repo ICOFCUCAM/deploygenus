@@ -22,6 +22,7 @@ from forge.domain.models import (
     Process,
     ProcessType,
     Project,
+    Volume,
 )
 
 
@@ -41,6 +42,7 @@ def to_project(row: dict[str, Any]) -> Project:
         memory_mb=row["memory_mb"],
         cpu_shares=float(row["cpu_shares"]),
         keep_warm=row["keep_warm"],
+        stop_timeout_seconds=row["stop_timeout_seconds"],
         production_deployment_id=row["production_deployment_id"],
         webhook_secret=row["webhook_secret"],
         created_at=row["created_at"],
@@ -137,4 +139,14 @@ def to_job_run(row: dict[str, Any]) -> JobRun:
         created_at=row["created_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
+    )
+
+
+def to_volume(row: dict[str, Any]) -> Volume:
+    return Volume(
+        id=row["id"],
+        project_id=row["project_id"],
+        name=row["name"],
+        mount_path=row["mount_path"],
+        created_at=row["created_at"],
     )

@@ -23,6 +23,7 @@ from forge.domain.models import (
     Process,
     ProcessType,
     Project,
+    Volume,
 )
 
 NOW = datetime(2026, 9, 22, 14, 30, tzinfo=UTC)
@@ -44,6 +45,7 @@ def project(**kwargs) -> Project:
         memory_mb=512,
         cpu_shares=1.0,
         keep_warm=2,
+        stop_timeout_seconds=10,
         production_deployment_id=None,
         webhook_secret="a-webhook-secret-value",
         created_at=NOW,
@@ -157,3 +159,13 @@ def job_run(**kwargs) -> JobRun:
     )
     base.update(kwargs)
     return JobRun(**base)
+
+
+def volume(name: str = "recordings", mount_path: str = "/data") -> Volume:
+    return Volume(
+        id=uuid4(),
+        project_id=UUID("11111111-1111-1111-1111-111111111111"),
+        name=name,
+        mount_path=mount_path,
+        created_at=NOW,
+    )

@@ -203,6 +203,48 @@
   </div>
 </div>
 
+<h2>Volumes</h2>
+<div class="card">
+  {% if volumes %}
+  <div class="rows">
+    {% for volume, docker_name in volumes %}
+    <div class="row">
+      <div class="row-main">
+        <div class="row-title">
+          <span class="mono">{{ volume.mount_path }}</span>
+          <span class="pill pill-plain">{{ volume.name }}</span>
+        </div>
+        <div class="row-sub">Docker volume <span class="mono">{{ docker_name }}</span></div>
+      </div>
+      <div class="actions">
+        <form method="post"
+              action="/projects/{{ project.slug }}/volumes/{{ volume.name }}/delete">
+          <button class="btn btn-small btn-danger" type="submit">Unmount</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="card-body" {% if volumes %}style="border-top:1px solid var(--border)"{% endif %}>
+    <form method="post" action="/projects/{{ project.slug }}/volumes" class="inline-form">
+      <div class="field">
+        <label for="v_name">Name</label>
+        <input type="text" id="v_name" name="name" placeholder="recordings" required>
+      </div>
+      <div class="field field-mono">
+        <label for="v_path">Mount path</label>
+        <input type="text" id="v_path" name="mount_path" placeholder="/data" required>
+      </div>
+      <button class="btn" type="submit">Add volume</button>
+    </form>
+    <p class="hint" style="margin:10px 0 0">
+      Files here survive every deploy and are shared by production, its workers
+      and its jobs. Previews never mount them. Unmounting keeps the data.
+    </p>
+  </div>
+</div>
+
 <h2>Settings</h2>
 <div class="card"><div class="card-body">
   <form method="post" action="/projects/{{ project.slug }}/settings">
@@ -244,6 +286,12 @@
         <label for="s_warm">Deployments kept warm</label>
         <input type="text" id="s_warm" name="keep_warm" value="{{ project.keep_warm }}">
         <div class="hint">Older ones restart from their image on rollback.</div>
+      </div>
+      <div class="field">
+        <label for="s_stop">Stop timeout (seconds)</label>
+        <input type="text" id="s_stop" name="stop_timeout_seconds"
+               value="{{ project.stop_timeout_seconds }}">
+        <div class="hint">How long a replaced container gets to finish its work.</div>
       </div>
     </div>
     <button class="btn" type="submit">Save settings</button>

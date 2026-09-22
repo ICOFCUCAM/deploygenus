@@ -28,7 +28,7 @@ from forge.domain.models import (
     Process,
     Project,
 )
-from forge.engine import environment
+from forge.engine import environment, storage
 from forge.engine.logs import LogWriter
 from forge.repositories import deployments as deployment_repo
 from forge.repositories import processes as process_repo
@@ -66,9 +66,8 @@ async def reconcile_workers(
     # Anything running that this deployment does not want: a process that was
     # deleted, disabled, or scaled down.
     for name in sorted(existing - set(wanted)):
-        await containers.stop(name)
-        await containers.remove(name)
-        await log.system(f"stopped worker {name}")
+        await containers.drain(name, grace=project.stop_timeout_seconds)
+        await log.system(_draining_message(name, project))
 
     if not wanted:
         return 0
@@ -80,9 +79,17 @@ async def reconcile_workers(
         project, deployment, settings=settings, target=EnvTarget.PRODUCTION
     )
     env_file = environment.write_runtime_env_file(env, workdir / "worker.env")
+    mounts = await storage.mounts_for(project, target=EnvTarget.PRODUCTION)
 
     started = 0
     for name, process in sorted(wanted.items()):
+        # The worker being replaced is asked to finish rather than killed.
+        # It keeps running, under another name, alongside its successor until
+        # it exits or its stop timeout runs out — so a render that was
+        # halfway through when this deploy landed still completes.
+        if name in existing:
+            await containers.drain(name, grace=project.stop_timeout_seconds)
+            await log.system(_draining_message(name, project))
         await containers.run_worker(
             containers.TaskSpec(
                 image=deployment.image_tag,
@@ -92,6 +99,8 @@ async def reconcile_workers(
                 memory_mb=process.memory_mb,
                 env_file=env_file,
                 inline_env=env.inline,
+                volumes=mounts,
+                stop_timeout=project.stop_timeout_seconds,
                 labels={
                     containers.OWNER_LABEL: containers.OWNER_VALUE,
                     containers.PROJECT_LABEL: project.slug,
@@ -138,6 +147,7 @@ async def run_job(run: JobRun, process: Process, *, settings: Settings) -> JobRu
             project, deployment, settings=settings, target=EnvTarget.PRODUCTION
         )
         env_file = environment.write_runtime_env_file(env, workdir / "job.env")
+        mounts = await storage.mounts_for(project, target=EnvTarget.PRODUCTION)
 
         result = await containers.run_once(
             containers.TaskSpec(
@@ -148,6 +158,8 @@ async def run_job(run: JobRun, process: Process, *, settings: Settings) -> JobRu
                 memory_mb=process.memory_mb,
                 env_file=env_file,
                 inline_env=env.inline,
+                volumes=mounts,
+                stop_timeout=project.stop_timeout_seconds,
                 labels={
                     containers.OWNER_LABEL: containers.OWNER_VALUE,
                     containers.PROJECT_LABEL: project.slug,
@@ -213,6 +225,13 @@ async def _environment(
             url=settings.deployment_url(deployment.short_id),
             target=target,
         ),
+    )
+
+
+def _draining_message(name: str, project: Project) -> str:
+    return (
+        f"asked worker {name} to stop — it has "
+        f"{project.stop_timeout_seconds}s to finish what it is doing"
     )
 
 

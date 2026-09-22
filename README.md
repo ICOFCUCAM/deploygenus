@@ -17,9 +17,9 @@ monthly number rather than a function of traffic.
 ## Status
 
 **The engine is complete and tested; it has not yet been run end to end
-against a live Docker daemon.** 102 tests cover framework detection, image
+against a live Docker daemon.** 215 tests cover framework detection, image
 generation, secret handling, router configuration, encryption, webhook
-signatures and API authentication. The parts that need a daemon — an actual
+signatures, API authentication, volumes and draining. The parts that need a daemon — an actual
 `docker build`, an actual promotion — are written but unexercised. See
 [What is proven and what is not](#what-is-proven-and-what-is-not).
 
@@ -43,6 +43,8 @@ at the same time.
 | **A dashboard** | Projects, deployments, live build logs, variables, domains and one-click rollback |
 | **Background workers** | Long-running processes from the same image as the site — queue consumers, listeners |
 | **Scheduled jobs** | Five-field cron in UTC, with run history, captured output and catch-up after downtime |
+| **Persistent volumes** | Storage that survives every deploy, shared by production, its workers and its jobs |
+| **Graceful replacement** | A replaced container gets a per-project stop timeout to finish its work, without holding up the deploy |
 
 ## How it works
 
@@ -261,6 +263,68 @@ the end, and the amount kept is bounded so a job printing a megabyte a second
 cannot fill the database. Workers stream to the container log instead, because
 an always-on process would otherwise write an unbounded log table.
 
+### Volumes
+
+Everything a container writes disappears with the container, which happens on
+every deploy. That is right for a website and wrong for an app that keeps what
+it makes, such as recordings that a worker renders later. A volume is storage
+owned by the **project** rather than by a deployment:
+
+```bash
+forge volume add balancevid recordings /data
+forge volume list balancevid
+forge volume rm balancevid recordings    # stops mounting it; the data is kept
+```
+
+- It is mounted into the production web container, **every worker and every
+  scheduled job**, all at the same path. That is what lets the web app accept
+  an upload that a worker then processes.
+- It is **never mounted into a preview.** A branch deploy writing into
+  production's files is the same mistake as a preview holding the production
+  database password.
+- It takes effect from the next deploy, because Docker cannot add a mount to a
+  running container.
+- The Docker volume is called `forge_<project>_<name>`, created on first use and
+  **never deleted by Forge**. Removing a volume, or the whole project, only stops
+  mounting it. `forge doctor` lists volumes nothing mounts any more; deleting one
+  is a deliberate `docker volume rm`.
+
+**The one thing your image must do:** create the mount path and give it to the
+user the app runs as. A new volume copies the ownership of the directory it is
+mounted over. If the directory is missing, the volume is owned by root, and an
+app running as a normal user (as every image Forge generates does) cannot write
+to it:
+
+```dockerfile
+RUN mkdir -p /data && chown node:node /data     # before USER node
+```
+
+Back volumes up like a database. Forge does not snapshot them.
+
+### Letting work finish: the stop timeout
+
+```bash
+forge project set balancevid --stop-timeout 1800    # seconds; default 10
+```
+
+When a deploy replaces a container, Forge does not wait for the old one to
+stop. It renames the old container out of the way, sends it its stop signal,
+and starts the replacement immediately. The old container keeps running until
+it exits or until its stop timeout runs out, and then the worker removes it.
+A render that was halfway through when you pushed still finishes, and the
+deploy is not held up while it does.
+
+This applies to workers replaced on a promotion, workers removed or scaled
+down, and superseded web containers reclaimed after `keep_warm`. The timeout is
+also set on the container itself, so a host shutdown or daemon restart gives
+the app the same time.
+
+For this to help, the app has to treat the stop signal (`SIGTERM` unless the
+image sets `STOPSIGNAL`) as "take no new work, finish what you have, then
+exit". A queue consumer should do that anyway. Old and new workers overlap
+while this happens, so the queue must be safe to consume from twice. A
+database queue claimed with `FOR UPDATE SKIP LOCKED` is.
+
 ### Rollback
 
 ```bash
@@ -289,6 +353,7 @@ which is derived from the same token so a browser needs no second credential.
 | `GET /api/projects/{ref}/deployments` | history |
 | `GET PUT /api/projects/{ref}/env` · `DELETE …/env/{key}` | variables; values never come back out |
 | `GET POST /api/projects/{ref}/domains` · `POST …/{host}/verify` | custom domains |
+| `GET POST /api/projects/{ref}/volumes` · `DELETE …/volumes/{name}` | volumes; deleting keeps the data |
 | `GET /api/deployments/{id}` | one deployment |
 | `GET /api/deployments/{id}/logs` · `/logs/stream` | paged, or server-sent events |
 | `POST /api/deployments/{id}/promote` | promote or roll back |
@@ -346,7 +411,7 @@ and `og:image`.
 
 Run `./scripts/check.sh` for ruff, the import contracts and the suite.
 
-**Tested (168 tests, no daemon needed):** detection across nine stacks and its
+**Tested (215 tests, no daemon needed):** detection across nine stacks and its
 tie-breaks, including that a commented-out `output: 'standalone'` is not read
 as enabled; image invariants over every generator (non-root, multi-stage, no
 `ARG`, dependency layer before source); DNS label safety and non-enumerable
@@ -354,12 +419,19 @@ deployment ids; shell quoting proved by round-tripping through a real `sh`;
 multi-line values kept out of the env file; `0600` on both secret files;
 router JSON including priority, canonical redirect and path preservation;
 encryption round-trip and loud failure on a rotated key; webhook signature
-rejection and push filtering; API auth on every management route.
+rejection and push filtering; API auth on every management route; mount path
+validation; the exact `docker` arguments for mounts, stop timeouts, draining
+(rename, then signal by id) and the draining sweep.
+
+**Run against a real Postgres 16:** all three migrations, and the volume and
+stop-timeout commands and API routes, including the database's own rejection
+of a duplicate mount path and a comma in a path.
 
 **Not yet exercised:** a real `docker build`, container start, health check,
 promotion or rollback against a live daemon — this environment has the Docker
-CLI but no daemon. Also unexercised: the migrations against a real Postgres,
-and Traefik actually reloading a written route file.
+CLI but no daemon. That includes a volume actually being mounted and a
+draining container being renamed and signalled. Also unexercised: Traefik
+actually reloading a written route file.
 
 **Not built:** image garbage collection; job and log retention; metrics;
 multi-node scheduling; alerting when a scheduled job starts failing.

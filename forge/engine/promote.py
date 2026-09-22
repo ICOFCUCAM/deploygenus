@@ -106,8 +106,12 @@ async def reclaim(
     for deployment in stale:
         if not deployment.container_id:
             continue
-        await containers.stop(deployment.container_id)
-        await containers.remove(deployment.container_id)
+        # Drained, not stopped: nothing routes production to it any more, but
+        # a request or upload already in flight is given the project's stop
+        # timeout to finish, without this promotion waiting on it.
+        await containers.drain(
+            deployment.container_id, grace=project.stop_timeout_seconds
+        )
         await deployment_repo.set_container(deployment.id, None)
         if log:
             await log.system(

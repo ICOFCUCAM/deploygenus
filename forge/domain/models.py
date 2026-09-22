@@ -103,6 +103,11 @@ class Project:
     memory_mb: int
     cpu_shares: float
     keep_warm: int
+    #: Seconds a container is given to finish after it is asked to stop —
+    #: on a deploy, a rollback, a scale-down or a host shutdown. The default
+    #: suits a web server; a worker that renders video for twenty minutes
+    #: needs the twenty minutes.
+    stop_timeout_seconds: int
     production_deployment_id: UUID | None
     webhook_secret: str
     created_at: datetime
@@ -165,6 +170,24 @@ class Domain:
     @property
     def is_verified(self) -> bool:
         return self.verified_at is not None
+
+
+@dataclass(frozen=True, slots=True)
+class Volume:
+    """Storage that outlives every deployment of a project.
+
+    Mounted into the production web container, every worker and every
+    scheduled job — the same data for all of them, which is what lets a web
+    app accept an upload that a worker then processes. Never mounted into a
+    preview, for the reason preview deployments never see production secrets.
+    """
+
+    id: UUID
+    project_id: UUID
+    name: str
+    #: Absolute, canonical path inside the container. See forge.domain.storage.
+    mount_path: str
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

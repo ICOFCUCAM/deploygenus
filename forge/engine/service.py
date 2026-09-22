@@ -69,6 +69,11 @@ async def redeploy(project: Project, deployment: Deployment) -> Deployment:
     )
 
 
+async def sweep_draining() -> tuple[int, int]:
+    """Clear away containers that were asked to stop. (finished, killed)."""
+    return await containers.sweep_draining()
+
+
 async def reconcile(settings: Settings) -> dict[str, int]:
     """Make the database agree with the Docker daemon.
 

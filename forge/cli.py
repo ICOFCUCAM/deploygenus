@@ -24,6 +24,7 @@ from forge.engine.logs import LogWriter
 from forge.repositories import deployments as deployment_repo
 from forge.repositories import processes as process_repo
 from forge.repositories import projects as project_repo
+from forge.repositories import volumes as volume_repo
 
 MIGRATIONS = Path(__file__).resolve().parent.parent / "db" / "migrations"
 
@@ -226,6 +227,85 @@ async def cmd_env_rm(args: argparse.Namespace, settings: Settings) -> None:
     print(f"removed {removed} entr{'y' if removed == 1 else 'ies'}")
 
 
+async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
+    project = await project_repo.resolve(args.project)
+    changes = {
+        key: value
+        for key, value in (
+            ("stop_timeout_seconds", args.stop_timeout),
+            ("memory_mb", args.memory),
+            ("cpu_shares", args.cpus),
+            ("keep_warm", args.keep_warm),
+        )
+        if value is not None
+    }
+    if not changes:
+        raise ForgeError("Nothing to change — pass --stop-timeout, --memory, --cpus …")
+    for key, low, high in (
+        ("stop_timeout_seconds", 1, 86400),
+        ("memory_mb", 64, 65536),
+        ("cpu_shares", 0.01, 64),
+        ("keep_warm", 0, 50),
+    ):
+        if key in changes and not low <= changes[key] <= high:
+            raise ForgeError(f"{key} must be between {low:g} and {high:g}")
+    updated = await project_repo.update(project.id, changes)
+    print(f"updated {updated.slug}")
+    print(f"  stop timeout  {updated.stop_timeout_seconds}s")
+    print(f"  memory        {updated.memory_mb} MB, {updated.cpu_shares:g} CPU")
+    print(f"  kept warm     {updated.keep_warm}")
+    print("  applies to containers started from now on — deploy to apply it")
+
+
+async def cmd_volume_add(args: argparse.Namespace, settings: Settings) -> None:
+    from forge.domain.storage import (
+        docker_volume_name,
+        normalise_mount_path,
+        validate_volume_name,
+    )
+
+    project = await project_repo.resolve(args.project)
+    volume = await volume_repo.create(
+        project_id=project.id,
+        name=validate_volume_name(args.name),
+        mount_path=normalise_mount_path(args.path),
+    )
+    print(f"added {volume.name} at {volume.mount_path}")
+    print(f"  docker volume  {docker_volume_name(project.slug, volume.name)}")
+    print("  mounted into production, its workers and its jobs from the next deploy")
+    print("  never mounted into a preview")
+    print(
+        f"  the image must have {volume.mount_path} owned by the user the app "
+        "runs as, or the app cannot write to it — see README, Volumes"
+    )
+
+
+async def cmd_volume_list(args: argparse.Namespace, settings: Settings) -> None:
+    from forge.domain.storage import docker_volume_name
+
+    project = await project_repo.resolve(args.project)
+    found = await volume_repo.list_for_project(project.id)
+    if not found:
+        print("no volumes — forge volume add <project> <name> <path>")
+        return
+    for volume in found:
+        print(
+            f"{volume.name:20} {volume.mount_path:24} "
+            f"{docker_volume_name(project.slug, volume.name)}"
+        )
+
+
+async def cmd_volume_rm(args: argparse.Namespace, settings: Settings) -> None:
+    from forge.domain.storage import docker_volume_name
+
+    project = await project_repo.resolve(args.project)
+    volume = await volume_repo.delete(project.id, args.name)
+    name = docker_volume_name(project.slug, volume.name)
+    print(f"removed {volume.name} — no longer mounted from the next deploy")
+    print(f"  the data is untouched in docker volume {name}")
+    print(f"  to delete it for good, once nothing uses it:  docker volume rm {name}")
+
+
 async def cmd_domain_add(args: argparse.Namespace, settings: Settings) -> None:
     project = await project_repo.resolve(args.project)
     domain = await project_repo.add_domain(project.id, args.host, primary=args.primary)
@@ -401,11 +481,57 @@ async def cmd_doctor(args: argparse.Namespace, settings: Settings) -> None:
     else:
         print(f"wildcard DNS        {settings.deploy_domain} does not resolve")
 
+    await _doctor_volumes()
+
     stuck = await deployment_repo.reclaim_abandoned(
         older_than_seconds=settings.build_timeout_seconds + 120
     )
     if stuck:
         print(f"abandoned builds    failed {len(stuck)} stuck deployment(s)")
+
+
+async def _doctor_volumes() -> None:
+    """Configured volumes against Docker's, in both directions.
+
+    A configured volume Docker does not have yet is normal before the first
+    deploy after adding it. A Forge volume that nothing configures is data
+    left behind by a removed volume or a deleted project — reported, never
+    deleted, because only a person can decide it is no longer wanted.
+    """
+    from forge.domain.storage import docker_volume_name
+
+    try:
+        present = set(await containers.list_owned_volumes())
+    except Exception as exc:  # noqa: BLE001 - reporting, not handling
+        print(f"volumes             could not list — {exc}")
+        return
+
+    configured = set()
+    for project in await project_repo.list_all():
+        for volume in await volume_repo.list_for_project(project.id):
+            name = docker_volume_name(project.slug, volume.name)
+            configured.add(name)
+            state = "ok" if name in present else "not created yet (next deploy)"
+            print(f"volume              {name} at {volume.mount_path} — {state}")
+
+    for name in sorted(present - configured):
+        print(
+            f"  unused volume     {name} — nothing mounts it; "
+            f"`docker volume rm {name}` if the data is not needed"
+        )
+
+    try:
+        draining = [
+            c.get("Names", "")
+            for c in await containers.list_owned()
+            if ".draining." in c.get("Names", "")
+        ]
+    except Exception:  # noqa: BLE001 - already reported above if docker is down
+        return
+    if draining:
+        print(f"draining            {len(draining)} container(s) finishing work:")
+        for name in sorted(draining):
+            print(f"  {name}")
 
 
 def _writable(path: Path) -> bool:
@@ -460,6 +586,19 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--root", help="subdirectory the app lives in")
     create.set_defaults(handler=cmd_project_create)
     project.add_parser("list").set_defaults(handler=cmd_project_list)
+    project_set = project.add_parser("set", help="change a project's limits")
+    project_set.add_argument("project")
+    project_set.add_argument(
+        "--stop-timeout",
+        type=int,
+        help="seconds a container gets to finish after being asked to stop",
+    )
+    project_set.add_argument("--memory", type=int, help="memory limit in MB")
+    project_set.add_argument("--cpus", type=float, help="CPU limit, e.g. 2")
+    project_set.add_argument(
+        "--keep-warm", type=int, help="superseded deployments kept running"
+    )
+    project_set.set_defaults(handler=cmd_project_set)
 
     deploy = sub.add_parser("deploy", help="queue a deployment")
     deploy.add_argument("project")
@@ -548,6 +687,22 @@ def _parser() -> argparse.ArgumentParser:
         help="also print the most recent run's output",
     )
     runs.set_defaults(handler=cmd_runs)
+
+    volume = sub.add_parser(
+        "volume", help="manage storage that survives deploys"
+    ).add_subparsers()
+    vol_add = volume.add_parser("add", help="mount a persistent volume")
+    vol_add.add_argument("project")
+    vol_add.add_argument("name", help="e.g. recordings")
+    vol_add.add_argument("path", help="absolute path inside the container, e.g. /data")
+    vol_add.set_defaults(handler=cmd_volume_add)
+    vol_list = volume.add_parser("list")
+    vol_list.add_argument("project")
+    vol_list.set_defaults(handler=cmd_volume_list)
+    vol_rm = volume.add_parser("rm", help="stop mounting a volume (keeps its data)")
+    vol_rm.add_argument("project")
+    vol_rm.add_argument("name")
+    vol_rm.set_defaults(handler=cmd_volume_rm)
 
     webhook = sub.add_parser("webhook", help="print a project's webhook settings")
     webhook.add_argument("project")

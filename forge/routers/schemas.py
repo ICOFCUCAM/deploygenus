@@ -22,6 +22,7 @@ from forge.domain.models import (
     Process,
     ProcessType,
     Project,
+    Volume,
 )
 
 SLUG_PATTERN = r"^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
@@ -55,6 +56,7 @@ class UpdateProject(BaseModel):
     memory_mb: int | None = Field(default=None, ge=64, le=65536)
     cpu_shares: float | None = Field(default=None, gt=0, le=64)
     keep_warm: int | None = Field(default=None, ge=0, le=50)
+    stop_timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
 
     def changes(self) -> dict[str, Any]:
         return self.model_dump(exclude_unset=True, exclude_none=True)
@@ -98,6 +100,7 @@ class ProjectOut(BaseModel):
     memory_mb: int
     cpu_shares: float
     keep_warm: int
+    stop_timeout_seconds: int
     production_deployment_id: UUID | None
     created_at: datetime
 
@@ -115,6 +118,7 @@ class ProjectOut(BaseModel):
             memory_mb=project.memory_mb,
             cpu_shares=project.cpu_shares,
             keep_warm=project.keep_warm,
+            stop_timeout_seconds=project.stop_timeout_seconds,
             production_deployment_id=project.production_deployment_id,
             created_at=project.created_at,
         )
@@ -187,6 +191,31 @@ class DomainOut(BaseModel):
             is_primary=domain.is_primary,
             verified=domain.is_verified,
             verified_at=domain.verified_at,
+        )
+
+
+class AddVolume(BaseModel):
+    name: str = Field(min_length=1, max_length=32)
+    mount_path: str = Field(min_length=2, max_length=255)
+
+
+class VolumeOut(BaseModel):
+    name: str
+    mount_path: str
+    #: What `docker volume ls` calls it, for the operator who needs to back
+    #: it up or, deliberately, delete it.
+    docker_volume: str
+    created_at: datetime
+
+    @classmethod
+    def of(cls, volume: Volume, *, project_slug: str) -> VolumeOut:
+        from forge.domain.storage import docker_volume_name
+
+        return cls(
+            name=volume.name,
+            mount_path=volume.mount_path,
+            docker_volume=docker_volume_name(project_slug, volume.name),
+            created_at=volume.created_at,
         )
 
 
