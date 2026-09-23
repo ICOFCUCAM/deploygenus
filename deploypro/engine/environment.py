@@ -61,9 +61,15 @@ async def collect(
     just because it was deployed from the same repository.
     """
     resolved: dict[str, str] = dict(injected or {})
-    for var in await project_repo.list_env(project_id):
-        if var.target.covers(target):
-            resolved[var.key] = crypto.decrypt(var.value_encrypted, key=key)
+    stored = await project_repo.list_env(project_id)
+    variables = [var for var in stored if var.target.covers(target)]
+    # `all` first, the specific scope second, so a production-only value
+    # beats the same key set for all environments. Not left to row order: the
+    # database returns targets in enum order (production, preview, all),
+    # which once let the general value silently win.
+    variables.sort(key=lambda var: var.target is not EnvTarget.ALL)
+    for var in variables:
+        resolved[var.key] = crypto.decrypt(var.value_encrypted, key=key)
     return _split(resolved)
 
 

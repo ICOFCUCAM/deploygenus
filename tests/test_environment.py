@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import stat
 import subprocess
+from dataclasses import replace
 
+from cryptography.fernet import Fernet
+
+from deploypro.adapters import crypto
 from deploypro.domain.models import EnvTarget
+from deploypro.engine import environment
 from deploypro.engine.environment import (
     Environment,
     _split,
@@ -13,6 +18,7 @@ from deploypro.engine.environment import (
     write_build_secret,
     write_runtime_env_file,
 )
+from tests import fakes
 
 
 def test_a_value_containing_a_quote_cannot_escape_the_shell(tmp_path):
@@ -86,3 +92,89 @@ def test_the_platform_tells_a_deployment_its_own_url():
     )
     assert variables["DEPLOYPRO_URL"] == "https://blog-abc123.deploys.example.com"
     assert variables["DEPLOYPRO_ENV"] == "preview"
+
+
+class TestScopePrecedence:
+    """A variable scoped to one environment beats the same key set for all.
+
+    Regression: `list_env` returns rows ordered by key, then target, and the
+    Postgres enum orders targets production < preview < all. Resolving them in
+    that order let the `all` value overwrite a production-only one, so a
+    production DATABASE_URL set beside a general one was silently ignored.
+    """
+
+    KEY = Fernet.generate_key().decode()
+
+    def rows(self, *pairs):
+        # In the order the database returns them: by key, then by the enum's
+        # declaration order (production, preview, all).
+        order = {EnvTarget.PRODUCTION: 0, EnvTarget.PREVIEW: 1, EnvTarget.ALL: 2}
+        made = [
+            replace(
+                fakes.env_var(key, target),
+                value_encrypted=crypto.encrypt(value, key=self.KEY),
+            )
+            for key, target, value in pairs
+        ]
+        return sorted(made, key=lambda v: (v.key, order[v.target]))
+
+    async def resolve(self, monkeypatch, rows, target):
+        monkeypatch.setattr(
+            environment.project_repo, "list_env", lambda _id: _async(rows)
+        )
+        env = await environment.collect(fakes.project().id, target=target, key=self.KEY)
+        return env.all
+
+    async def test_a_production_value_beats_the_all_value_in_production(
+        self, monkeypatch
+    ):
+        rows = self.rows(
+            ("DATABASE_URL", EnvTarget.ALL, "postgres://shared"),
+            ("DATABASE_URL", EnvTarget.PRODUCTION, "postgres://production"),
+        )
+        resolved = await self.resolve(monkeypatch, rows, EnvTarget.PRODUCTION)
+        assert resolved["DATABASE_URL"] == "postgres://production"
+
+    async def test_a_preview_value_beats_the_all_value_in_previews(self, monkeypatch):
+        rows = self.rows(
+            ("API_URL", EnvTarget.ALL, "https://api.example.com"),
+            ("API_URL", EnvTarget.PREVIEW, "https://staging.example.com"),
+        )
+        resolved = await self.resolve(monkeypatch, rows, EnvTarget.PREVIEW)
+        assert resolved["API_URL"] == "https://staging.example.com"
+
+    async def test_the_all_value_still_applies_where_nothing_more_specific_is_set(
+        self, monkeypatch
+    ):
+        rows = self.rows(
+            ("DATABASE_URL", EnvTarget.ALL, "postgres://shared"),
+            ("DATABASE_URL", EnvTarget.PRODUCTION, "postgres://production"),
+        )
+        resolved = await self.resolve(monkeypatch, rows, EnvTarget.PREVIEW)
+        assert resolved["DATABASE_URL"] == "postgres://shared"
+
+    async def test_a_variable_scoped_elsewhere_is_never_visible(self, monkeypatch):
+        rows = self.rows(("SECRET", EnvTarget.PRODUCTION, "prod-only"))
+        resolved = await self.resolve(monkeypatch, rows, EnvTarget.PREVIEW)
+        assert "SECRET" not in resolved
+
+    async def test_deploypros_own_variables_can_be_overridden_by_the_owner(
+        self, monkeypatch
+    ):
+        """Unchanged behaviour, pinned: a project variable replaces an injected
+        one of the same name."""
+        rows = self.rows(("DEPLOYPRO_URL", EnvTarget.ALL, "https://custom.example"))
+        monkeypatch.setattr(
+            environment.project_repo, "list_env", lambda _id: _async(rows)
+        )
+        env = await environment.collect(
+            fakes.project().id,
+            target=EnvTarget.PRODUCTION,
+            key=self.KEY,
+            injected={"DEPLOYPRO_URL": "https://injected.example"},
+        )
+        assert env.all["DEPLOYPRO_URL"] == "https://custom.example"
+
+
+async def _async(value):
+    return value
