@@ -12,8 +12,12 @@ point at, atomically. Traefik notices within its watch interval and moves the
 traffic with no container touched at all. Rollback is the same write with an
 older service name, which is why it takes about as long as saving a file.
 
-JSON rather than YAML deliberately — Traefik reads either, and `json.dumps`
-cannot produce a quoting bug in a hostname the way hand-written YAML can.
+The content is JSON, written by `json.dumps`, which cannot produce a quoting
+bug in a hostname the way hand-written YAML can. The file is named `.yml`,
+because Traefik's file provider reads only `.yml`, `.yaml` and `.toml` and
+skips anything else without an error. JSON is valid YAML, so Traefik parses
+the same bytes under a name it reads. This was a `.json` file until the first
+run against a real Traefik showed every production route being skipped.
 """
 
 from __future__ import annotations
@@ -44,7 +48,17 @@ class ProductionRoute:
     aliases: tuple[str, ...] = ()
 
 
+#: The only extensions Traefik's file provider loads. Anything else is
+#: skipped, with a debug-level log line and nothing else.
+TRAEFIK_EXTENSIONS = (".yml", ".yaml", ".toml")
+
+
 def config_path(directory: Path, project_slug: str) -> Path:
+    return directory / f"project-{project_slug}.yml"
+
+
+def _legacy_path(directory: Path, project_slug: str) -> Path:
+    """Where earlier versions wrote the route, which Traefik never read."""
     return directory / f"project-{project_slug}.json"
 
 
@@ -100,7 +114,9 @@ def write_route(
     if middlewares:
         document["http"]["middlewares"] = middlewares
 
-    return _write_atomic(config_path(directory, route.project_slug), document)
+    written = _write_atomic(config_path(directory, route.project_slug), document)
+    _legacy_path(directory, route.project_slug).unlink(missing_ok=True)
+    return written
 
 
 def clear_route(project_slug: str, *, directory: Path) -> None:
@@ -111,6 +127,7 @@ def clear_route(project_slug: str, *, directory: Path) -> None:
     answering for the site's domains.
     """
     config_path(directory, project_slug).unlink(missing_ok=True)
+    _legacy_path(directory, project_slug).unlink(missing_ok=True)
 
 
 def _host_rule(hosts: list[str]) -> str:
@@ -125,7 +142,9 @@ def _write_atomic(path: Path, document: dict) -> Path:
     responds to a config it cannot parse by keeping the last good one and
     logging — so the promotion would appear to succeed and change nothing.
     """
-    tmp = path.with_suffix(".json.tmp")
+    # `.tmp` is not an extension Traefik loads, so it never sees the partial
+    # file — only the rename.
+    tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
     os.replace(tmp, path)
     return path

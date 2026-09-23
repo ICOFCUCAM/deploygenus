@@ -291,3 +291,35 @@ its successor started, with no grace period at all. Draining changes that for
 every project, not only for ones that raise the timeout: with the default
 10 seconds, a worker now gets the same 10 seconds `docker stop` would give it.
 
+The sweep runs every 5 seconds, on the job loop. It first ran once a minute
+on the deploy loop, and the end-to-end run showed why that was wrong: the
+deploy loop is busy for the whole of a build, so a 5-second stop timeout was
+overshot by as long as someone else's build took. The sweep interval is how
+late a deadline can be, so it has to be short, and it has to run on a loop
+that never waits on a build.
+
+## The route file is YAML by name and JSON by content
+
+Traefik's file provider loads `.yml`, `.yaml` and `.toml`, and skips every
+other file with a debug-level log line and no error. Forge wrote `.json` until
+the first end-to-end run, so no production route had ever been read. Every
+unit test passed throughout, because they checked what was in the file and
+not whether Traefik would open it.
+
+The content is still `json.dumps` output. JSON is valid YAML, and a
+serialiser cannot produce a quoting bug in a hostname the way hand-written
+YAML can. Only the name changed. A unit test now pins the extension to the
+list Traefik reads.
+
+## The end-to-end run is a script, not a unit test
+
+`scripts/e2e/run.sh` needs a Docker daemon, a Postgres and about two minutes,
+so it is not part of `scripts/check.sh`. It pulls nothing from a registry
+except Traefik, and falls back to Traefik's GitHub release when it cannot pull
+that. Its test app is a static Go binary in a `FROM scratch` image. So it runs
+on a host with no Docker Hub access, which is where it was first developed.
+
+It serves its test repository over HTTPS with a throwaway certificate, rather
+than weakening Forge's refusal of `file://` URLs for its own convenience. A
+test that relaxes a safety check is not testing the thing that ships.
+

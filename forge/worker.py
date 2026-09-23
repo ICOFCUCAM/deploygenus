@@ -44,6 +44,12 @@ SWEEP_INTERVAL_SECONDS = 60.0
 #: would run some minutes' jobs late and others not at all.
 SCHEDULE_INTERVAL_SECONDS = 20.0
 
+#: How often to look at containers that were asked to stop. Short, because
+#: this is what enforces a stop timeout: a container still running at its
+#: deadline is killed at the first sweep after it, so the sweep interval is
+#: how late a deadline can be. It is one `docker ps`, which is cheap.
+DRAIN_SWEEP_INTERVAL_SECONDS = 5.0
+
 #: Concurrent scheduled jobs per worker. Three rather than one so a slow
 #: nightly job does not delay every other project's, and rather than many
 #: because each one is a container competing for the same host.
@@ -63,6 +69,7 @@ class Worker:
         self._stopping = asyncio.Event()
         self._last_reclaim = 0.0
         self._last_schedule = 0.0
+        self._last_drain_sweep = 0.0
         self._jobs: set[asyncio.Task] = set()
 
     def request_stop(self) -> None:
@@ -139,6 +146,7 @@ class Worker:
     async def _job_loop(self) -> None:
         while not self._stopping.is_set():
             await self._schedule()
+            await self._sweep_draining()
 
             if len(self._jobs) >= JOB_CONCURRENCY:
                 await self._idle()
@@ -194,6 +202,30 @@ class Worker:
             # A broken sweep must not end the loop that also executes jobs.
             logger.exception("schedule sweep failed")
 
+    async def _sweep_draining(self) -> None:
+        """Remove replaced containers that finished; kill ones out of time.
+
+        On the job loop, not the deploy loop: the deploy loop is busy for the
+        whole of a build, and a stop timeout that could be overshot by the
+        length of someone else's build would not be a timeout.
+        """
+        now = time.monotonic()
+        if now - self._last_drain_sweep < DRAIN_SWEEP_INTERVAL_SECONDS:
+            return
+        self._last_drain_sweep = now
+        try:
+            finished, killed = await service.sweep_draining()
+        except Exception:
+            logger.exception("draining sweep failed")
+            return
+        if finished:
+            logger.info("removed %s container(s) that finished draining", finished)
+        if killed:
+            logger.warning(
+                "killed %s container(s) still running at the end of their stop timeout",
+                killed,
+            )
+
     async def _reclaim(self) -> None:
         now = time.monotonic()
         if now - self._last_reclaim < SWEEP_INTERVAL_SECONDS:
@@ -212,23 +244,6 @@ class Worker:
         # timeout is the one configured on the slowest process.
         for run in await process_repo.reclaim_abandoned_runs(older_than_seconds=7200):
             logger.warning("failed abandoned job run %s", run.id)
-
-        # Replaced containers finishing their work. Checked here, on the same
-        # minute-ish cadence, because a deadline is a stop timeout — seconds to
-        # hours — and a container killed up to a minute late has lost nothing.
-        try:
-            finished, killed = await service.sweep_draining()
-        except Exception:
-            logger.exception("draining sweep failed")
-        else:
-            if finished:
-                logger.info("removed %s container(s) that finished draining", finished)
-            if killed:
-                logger.warning(
-                    "killed %s container(s) still running at the end of their "
-                    "stop timeout",
-                    killed,
-                )
 
     async def _idle(self) -> None:
         """Sleep, but wake immediately on shutdown.

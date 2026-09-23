@@ -16,11 +16,21 @@ monthly number rather than a function of traffic.
 
 ## Status
 
-**The engine is complete and tested; it has not yet been run end to end
-against a live Docker daemon.** 215 tests cover framework detection, image
-generation, secret handling, router configuration, encryption, webhook
-signatures, API authentication, volumes and draining. The parts that need a daemon — an actual
-`docker build`, an actual promotion — are written but unexercised. See
+**Forge has been run end to end on a real Docker daemon, a real Traefik and a
+real Postgres.** `scripts/e2e/run.sh` deploys a test app from a git push, then:
+- routes a production domain
+- deploys again during a render and checks the render finishes
+- rolls back
+- checks a preview cannot see production's files
+- runs a cron job against the shared volume
+- checks a stop timeout is enforced
+- deploys from a signed webhook
+
+It makes 39 checks in under two minutes. The first run found three bugs that
+would have stopped every real installation. All three are fixed.
+
+217 unit tests cover everything that does not need a daemon. What is still
+unproven, chiefly HTTPS and Forge's own container image, is listed under
 [What is proven and what is not](#what-is-proven-and-what-is-not).
 
 The dashboard is server-rendered from the control plane itself — no build
@@ -61,7 +71,7 @@ Four processes and the containers they create.
             │                                 │                 │
    ┌────────▼─────────┐          ┌────────────▼──────────────┐  │
    │ router config    │          │  blog-3f9a2c71  (live)    │──┘
-   │ project-blog.json│          │  blog-9d1e0f44  (warm)    │
+   │ project-blog.yml │          │  blog-9d1e0f44  (warm)    │
    └────────▲─────────┘          │  api-77c2b310   (live)    │
             │ writes             └───────────────────────────┘
             │                                 ▲
@@ -311,6 +321,8 @@ When a deploy replaces a container, Forge does not wait for the old one to
 stop. It renames the old container out of the way, sends it its stop signal,
 and starts the replacement immediately. The old container keeps running until
 it exits or until its stop timeout runs out, and then the worker removes it.
+The worker checks every 5 seconds, so a deadline is enforced within 5 seconds
+of the timeout.
 A render that was halfway through when you pushed still finishes, and the
 deploy is not held up while it does.
 
@@ -409,7 +421,37 @@ and `og:image`.
 
 ## What is proven and what is not
 
-Run `./scripts/check.sh` for ruff, the import contracts and the suite.
+Run `./scripts/check.sh` for ruff, the import contracts and the unit suite.
+Run `./scripts/e2e/run.sh` on any host with Docker for the end-to-end run.
+
+**Run end to end** (`scripts/e2e/run.sh`, 39 checks, Docker 29.3, Traefik
+3.7.13, Postgres 16):
+- a git push, cloned over HTTPS
+- a build from the repository's own Dockerfile, the start, and the health check
+- routing on the deployment's own URL, and on a production domain through the
+  route file
+- a volume written by the web process, the worker and a cron job, and never
+  mounted into a preview
+- a deploy during a render: the old worker finishes, and its replacement
+  starts at once
+- a stop timeout enforced within 5 seconds of its deadline
+- rollback to a deployment whose container had been reclaimed, in about a
+  second, with the workers rolling back too
+- a forged webhook refused, and a signed one deployed
+
+Checked by hand: every container came back after the Docker daemon was
+restarted, and Forge found nothing to repair.
+
+**Found by the first end-to-end run, and fixed:**
+- Traefik read none of Forge's route files, because they were named `.json`
+  and its file provider reads only `.yml`, `.yaml` and `.toml`. No production
+  domain, promotion or rollback would ever have reached a real router.
+- The pinned `traefik:v3.1` cannot talk to Docker 29, so no deployment URL
+  would have been routed at all on a current host.
+- Draining failed on every image without a `STOPSIGNAL`, which is most of
+  them, because Docker omits that field rather than leaving it empty.
+- Stop deadlines could be overshot by a minute or more: the cleanup ran once a
+  minute, on a loop that pauses during builds.
 
 **Tested (215 tests, no daemon needed):** detection across nine stacks and its
 tie-breaks, including that a commented-out `output: 'standalone'` is not read
@@ -427,11 +469,16 @@ validation; the exact `docker` arguments for mounts, stop timeouts, draining
 stop-timeout commands and API routes, including the database's own rejection
 of a duplicate mount path and a comma in a path.
 
-**Not yet exercised:** a real `docker build`, container start, health check,
-promotion or rollback against a live daemon — this environment has the Docker
-CLI but no daemon. That includes a volume actually being mounted and a
-draining container being renamed and signalled. Also unexercised: Traefik
-actually reloading a written route file.
+**Not yet exercised:**
+- HTTPS. The end-to-end run uses plain HTTP, so the wildcard certificate over
+  DNS-01, per-domain certificates over HTTP-01 and the HTTP-to-HTTPS redirect
+  need a real domain.
+- Forge's own image and `docker compose up`. The environment the end-to-end
+  run was developed in cannot pull from Docker Hub, so the control plane ran
+  directly on the host instead of in `python:3.12-slim`.
+- The framework Dockerfiles Forge generates (Next.js, Django, Go and the rest)
+  against their real base images, for the same reason. The run uses the
+  repository's own `FROM scratch` Dockerfile.
 
 **Not built:** image garbage collection; job and log retention; metrics;
 multi-node scheduling; alerting when a scheduled job starts failing.

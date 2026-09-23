@@ -14,7 +14,10 @@ services:
   # The edge. The only thing with published ports.
   # ---------------------------------------------------------------------
   router:
-    image: traefik:v3.1
+    # v3.7, not older. Docker Engine 29 dropped the API versions that
+    # Traefik v3.1 and earlier use, so those connect, log "client version
+    # 1.24 is too old" and never route anything. Found by scripts/e2e/run.sh.
+    image: traefik:v3.7
     restart: unless-stopped
     command:
       - --providers.docker=true

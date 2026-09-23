@@ -114,9 +114,14 @@ class TestProcesses:
         assert seen["timeout"] > 1800
 
 
-def inspect_output(*, name="/forge-bv-render-0", running=True, signal=""):
+def inspect_output(*, name="/forge-bv-render-0", running=True, signal=None):
+    # As Docker prints it: StopSignal is absent, not empty, when the image
+    # does not set one.
+    config = {"Image": "forge/bv:abc"}
+    if signal:
+        config["StopSignal"] = signal
     return json.dumps(
-        {"id": "c0ffee" * 10, "name": name, "running": running, "signal": signal}
+        {"id": "c0ffee" * 10, "name": name, "running": running, "config": config}
     )
 
 

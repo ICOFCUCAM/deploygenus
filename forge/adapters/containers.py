@@ -304,9 +304,12 @@ async def drain(name_or_id: str, *, grace: int, now: float | None = None) -> Non
     the slowest worker takes to finish a render.
     """
     deadline = int((now if now is not None else time.time()) + grace)
+    # `.Config` whole, not `.Config.StopSignal`: Docker omits StopSignal when
+    # the image does not set one, and a template naming a missing key fails
+    # outright rather than printing nothing.
     template = (
         '{"id": {{json .Id}}, "name": {{json .Name}}, '
-        '"running": {{json .State.Running}}, "signal": {{json .Config.StopSignal}}}'
+        '"running": {{json .State.Running}}, "config": {{json .Config}}}'
     )
     try:
         info = json.loads(await _capture(["inspect", "--format", template, name_or_id]))
@@ -329,7 +332,8 @@ async def drain(name_or_id: str, *, grace: int, now: float | None = None) -> Non
         )
     await _capture(["update", "--restart=no", container_id])
     try:
-        await _capture(["kill", "--signal", info["signal"] or "SIGTERM", container_id])
+        signal = (info.get("config") or {}).get("StopSignal") or "SIGTERM"
+        await _capture(["kill", "--signal", signal, container_id])
     except DockerError as exc:
         # Exited between the inspect and the signal: nothing left to ask.
         if "is not running" not in str(exc) and "No such" not in str(exc):

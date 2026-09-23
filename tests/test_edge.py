@@ -77,7 +77,27 @@ def test_tls_is_omitted_entirely_when_no_resolver_is_configured(tmp_path):
 def test_writing_leaves_no_temporary_file_behind(tmp_path):
     """Traefik watches this directory. A stray .tmp would be parsed as config."""
     write_route(route(), directory=tmp_path, cert_resolver="le")
-    assert [p.name for p in tmp_path.iterdir()] == ["project-blog.json"]
+    assert [p.name for p in tmp_path.iterdir()] == ["project-blog.yml"]
+
+
+def test_the_route_file_has_an_extension_traefik_actually_loads(tmp_path):
+    """Traefik's file provider skips `.json` without an error. Forge wrote
+    `.json` until the first run against a real Traefik, and no production
+    domain was ever routed."""
+    from forge.adapters.edge import TRAEFIK_EXTENSIONS
+
+    path = write_route(route(), directory=tmp_path, cert_resolver="le")
+    assert path.suffix in TRAEFIK_EXTENSIONS
+
+
+def test_a_route_left_by_an_earlier_version_is_replaced(tmp_path):
+    (tmp_path / "project-blog.json").write_text("{}")
+    write_route(route(), directory=tmp_path, cert_resolver="le")
+    assert [p.name for p in tmp_path.iterdir()] == ["project-blog.yml"]
+    clear_route("blog", directory=tmp_path)
+    (tmp_path / "project-blog.json").write_text("{}")
+    clear_route("blog", directory=tmp_path)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_clearing_a_route_is_safe_when_there_is_nothing_to_clear(tmp_path):
