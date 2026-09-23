@@ -7,6 +7,7 @@ database: everything here is decided before a handler touches one.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import httpx
 import pytest
@@ -86,3 +87,37 @@ async def test_the_webhook_secret_is_not_readable_through_the_api(client):
     response = await client.get("/webhooks/blog/secret")
     assert response.status_code == 404
     assert "not readable" in response.json()["error"]["message"]
+
+
+class TestMigrationsDir:
+    """The first real install ran `migrate` from an installed package, found no
+    migrations beside it, and reported an empty database as up to date."""
+
+    def test_an_explicit_directory_wins(self, tmp_path, monkeypatch):
+        from deploypro.cli import migrations_dir
+
+        (tmp_path / "0001_core.sql").write_text("select 1;")
+        monkeypatch.setenv("DEPLOYPRO_MIGRATIONS_DIR", str(tmp_path))
+        assert migrations_dir() == tmp_path
+
+    def test_finding_none_is_an_error_not_up_to_date(self, tmp_path, monkeypatch):
+        import deploypro.cli as cli
+        from deploypro.domain.errors import DeployProError
+
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        monkeypatch.setenv("DEPLOYPRO_MIGRATIONS_DIR", str(empty))
+        # Pretend to be installed somewhere with no db/ beside the package.
+        monkeypatch.setattr(
+            cli, "__file__", str(tmp_path / "site-packages/deploypro/cli.py")
+        )
+        monkeypatch.chdir(tmp_path)
+        if Path("/app/db/migrations").exists():
+            pytest.skip("this machine has /app/db/migrations")
+        with pytest.raises(DeployProError, match="No migration files found"):
+            cli.migrations_dir()
+
+    def test_the_image_says_where_its_migrations_are(self):
+        dockerfile = (Path(__file__).parent.parent / "Dockerfile").read_text()
+        assert "ENV DEPLOYPRO_MIGRATIONS_DIR=/app/db/migrations" in dockerfile
+        assert "COPY db ./db" in dockerfile

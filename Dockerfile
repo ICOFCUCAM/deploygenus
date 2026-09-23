@@ -27,6 +27,9 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY deploypro ./deploypro
 COPY db ./db
+# `deploypro migrate` reads its migrations from here. The package itself is
+# installed into site-packages, where there is no db/ beside it.
+ENV DEPLOYPRO_MIGRATIONS_DIR=/app/db/migrations
 RUN pip install --no-cache-dir .
 
 # Root, and unusually this is correct rather than lazy: the process's whole
