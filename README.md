@@ -656,15 +656,27 @@ validation; the exact `docker` arguments for mounts, stop timeouts, draining
 stop-timeout commands and API routes, including the database's own rejection
 of a duplicate mount path and a comma in a path.
 
+**Installed for real** (Hetzner CX23, Ubuntu 24.04, Docker 29.8, Cloudflare
+DNS), using `scripts/install.sh`:
+- DeployPro's own image builds and `docker compose up` starts it
+- migrations apply
+- `deploypro doctor` is clean
+- the wildcard certificate for `*.deploys.<domain>` is issued by Let's Encrypt
+  over DNS-01 through Cloudflare
+
+**Found by that first real install, and fixed:**
+- `migrate` looked for its files next to the installed package, found none
+  in the image, and reported an empty database as up to date. The image now
+  names the directory, and finding no migrations is an error.
+- Routers labelled `tls=true` opted out of the entrypoint's wildcard
+  certificate. Traefik applies that default only when a router's TLS is
+  unset, so no certificate was ever requested and Traefik's self-signed one
+  was served. The routers now carry no TLS label.
+
 **Not yet exercised:**
-- HTTPS. The end-to-end run uses plain HTTP, so the wildcard certificate over
-  DNS-01, per-domain certificates over HTTP-01 and the HTTP-to-HTTPS redirect
-  need a real domain.
-- DeployPro's own image and `docker compose up`. The environment the end-to-end
-  run was developed in cannot pull from Docker Hub, so the control plane ran
-  directly on the host instead of in `python:3.12-slim`.
-- The framework Dockerfiles DeployPro generates (Next.js, Django, Go and the rest)
-  against their real base images, for the same reason. The run uses the
+- Per-domain certificates over HTTP-01, for custom domains.
+- The framework Dockerfiles DeployPro generates (Next.js, Django, Go and the
+  rest) against their real base images. The end-to-end run uses the
   repository's own `FROM scratch` Dockerfile.
 
 **Not built:** metrics and graphs; multi-node scheduling; off-site backup
