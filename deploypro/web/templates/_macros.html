@@ -5,13 +5,16 @@
 <span class="pill pill-{{ status }}"><span class="dot"></span>{{ status }}</span>
 {%- endmacro %}
 
-{% macro deployment_row(d, show_project=false) -%}
+{# `production_id` is the project's current production deployment. A
+   Deployment does not know whether it is production (that is a property of
+   the project), so the caller says which one is. #}
+{% macro deployment_row(d, production_id=none, show_project=false) -%}
 <a class="row" href="/deployments/{{ d.short_id }}">
   <div class="row-main">
     <div class="row-title">
       <span>#{{ d.number }}</span>
       {{ status_pill(d.status.value) }}
-      {% if d.is_production %}<span class="pill pill-prod">production</span>{% endif %}
+      {% if production_id and d.id == production_id %}<span class="pill pill-prod">production</span>{% endif %}
       {% if d.trigger.value != 'push' %}
         <span class="pill pill-plain">{{ d.trigger.value }}</span>
       {% endif %}

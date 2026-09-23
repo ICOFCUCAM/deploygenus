@@ -50,7 +50,7 @@
 <h2>Deployments</h2>
 {% if deployments %}
   <div class="card rows">
-    {% for d in deployments %}{{ deployment_row(d) }}{% endfor %}
+    {% for d in deployments %}{{ deployment_row(d, project.production_deployment_id) }}{% endfor %}
   </div>
 {% else %}
   <div class="card"><div class="empty"><p>No deployments yet.</p></div></div>

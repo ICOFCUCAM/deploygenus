@@ -424,3 +424,47 @@ def test_a_real_install_carries_the_templates_and_static_files():
     shipped = pyproject["tool"]["setuptools"]["package-data"]["deploypro"]
     assert "web/templates/*.html" in shipped
     assert "web/static/*" in shipped
+
+
+class TestProductionMarker:
+    """The deployment list marks the one deployment serving production.
+
+    Regression: the row macro read `d.is_production`, which the Deployment
+    model does not have. Jinja treats a missing attribute as false, so the
+    marker never rendered on the project page, for any deployment.
+    """
+
+    @staticmethod
+    def rows(html: str) -> dict[str, str]:
+        """Each deployment row's markup, keyed by the deployment it links to."""
+        found = {}
+        for chunk in html.split('<a class="row" href="/deployments/')[1:]:
+            short_id, _, rest = chunk.partition('"')
+            found[short_id] = rest.split("</a>", 1)[0]
+        return found
+
+    async def test_the_serving_deployment_is_marked_and_only_it(self, client, repos):
+        live = repos["deployments"][0]
+        response = await client.get("/projects/blog")
+        rows = self.rows(response.text)
+        assert "pill-prod" in rows[live.short_id]
+        marked = [short_id for short_id, row in rows.items() if "pill-prod" in row]
+        assert marked == [live.short_id]
+
+    async def test_after_a_rollback_the_older_deployment_carries_the_marker(
+        self, client, repos
+    ):
+        older = fakes.deployment(number=11, short_id="blog-0a1b2c3d")
+        repos["deployments"].append(older)
+        repos["projects"][0] = fakes.project(production_deployment_id=older.id)
+        response = await client.get("/projects/blog")
+        rows = self.rows(response.text)
+        marked = [short_id for short_id, row in rows.items() if "pill-prod" in row]
+        assert marked == [older.short_id]
+
+    async def test_before_anything_is_in_production_nothing_is_marked(
+        self, client, repos
+    ):
+        repos["projects"][0] = fakes.project(production_deployment_id=None)
+        response = await client.get("/projects/blog")
+        assert "pill-prod" not in response.text
