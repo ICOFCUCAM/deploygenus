@@ -488,3 +488,26 @@ class TestImporting:
     async def test_an_unlinked_github_project_offers_to_link(self, client, connected):
         response = await client.get("/projects/blog")
         assert "/projects/blog/github/link" in response.text
+
+
+class TestPageTitle:
+    """Regression: adding the GitHub App card to New project inserted it before
+    every `{% endblock %}` in the template, including the title block's, so the
+    browser tab showed the card's raw HTML once an app was connected."""
+
+    @staticmethod
+    def title(html: str) -> str:
+        return html.split("<title>", 1)[1].split("</title>", 1)[0]
+
+    async def test_the_title_is_plain_text_with_an_app_connected(
+        self, client, connected, monkeypatch
+    ):
+        monkeypatch.setattr(engine, "list_repositories", lambda settings: _async([]))
+        response = await client.get("/projects/new")
+        assert self.title(response.text) == "New project — DeployPro"
+        # The card itself still renders once, in the page.
+        assert response.text.count("Disconnect</button>") == 1
+
+    async def test_the_title_is_plain_text_without_an_app(self, client, repos):
+        response = await client.get("/projects/new")
+        assert self.title(response.text) == "New project — DeployPro"

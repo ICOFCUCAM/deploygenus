@@ -1,19 +1,5 @@
 {% extends "base.html" %}
-{% block title %}New project — DeployPro{% if app %}
-<div class="card"><div class="card-body">
-  <div class="row-title" style="margin-bottom:6px">GitHub App</div>
-  <p class="hint" style="margin:0 0 10px">
-    Connected as <a href="{{ app.html_url }}" rel="noreferrer" class="mono">{{ app.slug }}</a>
-    {% if installations %}— installed on
-      {% for i in installations %}<span class="mono">{{ i.account_login }}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.
-  </p>
-  <form method="post" action="/github/disconnect"
-        onsubmit="return confirm('Disconnect the GitHub App? Imported projects stop deploying on push until it is connected again.')">
-    <button class="btn btn-small btn-danger" type="submit">Disconnect</button>
-  </form>
-</div></div>
-{% endif %}
-{% endblock %}
+{% block title %}New project — DeployPro{% endblock %}
 {% block content %}
 <div class="breadcrumb"><a href="/">Projects</a> / new</div>
 <div class="page-head"><h1>New project</h1></div>
