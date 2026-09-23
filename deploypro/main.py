@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -18,7 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from deploypro.adapters import db
 from deploypro.config import get_settings
 from deploypro.domain.errors import DeployProError
-from deploypro.routers import deployments, health, processes, projects, webhooks
+from deploypro.routers import deployments, github, health, processes, projects, webhooks
+from deploypro.web import github as dashboard_github
 from deploypro.web import routes as dashboard
 
 logger = logging.getLogger("deploypro")
@@ -68,6 +70,9 @@ app.include_router(deployments.router)
 app.include_router(processes.project_router)
 app.include_router(processes.router)
 app.include_router(webhooks.router)
+app.include_router(github.router)
+# Before the dashboard, whose routes are the least specific.
+app.include_router(dashboard_github.router)
 # Last, because it owns the root path and its routes are the least specific.
 app.include_router(dashboard.router)
 
@@ -78,7 +83,16 @@ async def handle_needs_login(request: Request, exc: Exception) -> RedirectRespon
 
     Sending JSON to someone who typed a URL is the kind of thing that makes a
     dashboard feel broken when it is merely locked.
+
+    The page asked for comes along, so signing in lands on it rather than on
+    the project list: that matters most when GitHub has just sent the browser
+    back with an installation to record.
     """
+    wanted = request.url.path
+    if request.method == "GET" and wanted != "/":
+        if request.url.query:
+            wanted += "?" + request.url.query
+        return RedirectResponse(f"/login?next={quote(wanted)}", status_code=303)
     return RedirectResponse("/login", status_code=303)
 
 

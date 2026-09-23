@@ -24,6 +24,7 @@ from deploypro.config import Settings, get_settings
 from deploypro.deps import SettingsDep, token_matches
 from deploypro.domain import naming, session
 from deploypro.domain.errors import DeployProError
+from deploypro.domain.github import repo_from_url
 from deploypro.domain.models import (
     Deployment,
     Domain,
@@ -44,6 +45,7 @@ from deploypro.engine import promote as promote_engine
 from deploypro.engine import routing, service, verify
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
+from deploypro.repositories import github as github_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
 from deploypro.repositories import volumes as volume_repo
@@ -85,9 +87,25 @@ def signed_in(request: Request) -> None:
     current_session(request, get_settings())
 
 
+def safe_next(target: str) -> str:
+    """Where to go after signing in: a path on this dashboard, or home.
+
+    Anything else ("//evil.example", "https://…") would make the sign-in page
+    an open redirect: a link that shows this dashboard's login and then hands
+    the freshly signed-in browser to someone else's site.
+    """
+    if target.startswith("/") and not target.startswith("//") and "\\" not in target:
+        return target
+    return "/"
+
+
 @router.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request, settings: SettingsDep, err: str = ""):
-    return _render(request, "login.html", {"err": err}, nav=False)
+async def login_form(
+    request: Request, settings: SettingsDep, err: str = "", next: str = "/"
+):
+    return _render(
+        request, "login.html", {"err": err, "next": safe_next(next)}, nav=False
+    )
 
 
 @router.post("/login")
@@ -95,11 +113,13 @@ async def login(
     request: Request,
     settings: SettingsDep,
     token: Annotated[str, Form()],
+    next: Annotated[str, Form()] = "/",
 ):
     if not token_matches(token.strip(), settings.api_token):
-        return _redirect("/login", err="That token is not valid.")
+        target = "/login" if safe_next(next) == "/" else f"/login?next={quote(next)}"
+        return _redirect(target, err="That token is not valid.")
 
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse(safe_next(next), status_code=303)
     response.set_cookie(
         session.COOKIE_NAME,
         session.issue(token=settings.api_token),
@@ -139,14 +159,20 @@ async def index(request: Request, settings: SettingsDep, ok: str = "", err: str 
 
 
 @router.get("/projects/new", response_class=HTMLResponse)
-async def new_project_form(request: Request, err: str = ""):
+async def new_project_form(
+    request: Request, settings: SettingsDep, q: str = "", ok: str = "", err: str = ""
+):
     signed_in(request)
-    return _render(request, "new_project.html", {"err": err})
+    from deploypro.web.github import new_project_context
+
+    context = await new_project_context(settings, q=q)
+    return _render(request, "new_project.html", {**context, "ok": ok, "err": err})
 
 
 @router.post("/projects/new")
 async def create_project(
     request: Request,
+    settings: SettingsDep,
     name: Annotated[str, Form()],
     repo_url: Annotated[str, Form()],
     production_branch: Annotated[str, Form()] = "main",
@@ -167,7 +193,11 @@ async def create_project(
         )
     except DeployProError as exc:
         return _redirect("/projects/new", err=exc.message)
-    return _redirect(f"/projects/{project.slug}", ok=f"Created {project.name}.")
+    from deploypro.engine import github
+
+    project = await github.try_link(project, settings)
+    linked = " Linked to the GitHub App: pushes deploy it." if project.github_repo else ""
+    return _redirect(f"/projects/{project.slug}", ok=f"Created {project.name}.{linked}")
 
 
 @router.get("/projects/{slug}", response_class=HTMLResponse)
@@ -200,10 +230,11 @@ async def project_page(
             ],
             "deploy_domain": settings.deploy_domain,
             "repo_is_ssh": is_ssh_url(project.repo_url),
-            "webhook_url": (
-                f"{settings.scheme}://deploypro.{settings.deploy_domain}"
-                f"/webhooks/{project.slug}"
+            "github_app": await github_repo.get_app(),
+            "repo_on_github": bool(
+                repo_from_url(project.repo_url, github_url=settings.github_url)
             ),
+            "webhook_url": f"{settings.dashboard_url}/webhooks/{project.slug}",
             "ok": ok,
             "err": err,
         },

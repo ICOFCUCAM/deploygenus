@@ -298,6 +298,33 @@
   </form>
 </div></div>
 
+{% if project.github_repo and project.github_installation_id %}
+<div class="card"><div class="card-body">
+  <div class="row-title" style="margin-bottom:6px">GitHub</div>
+  <p class="hint" style="margin:0 0 10px">
+    Linked to <span class="mono">{{ project.github_repo }}</span> through the GitHub App.
+    A push to <span class="mono">{{ project.production_branch }}</span> goes live, a push to
+    any other branch deploys a preview, and private repositories need nothing more.
+  </p>
+  <form method="post" action="/projects/{{ project.slug }}/github/unlink"
+        onsubmit="return confirm('Unlink from GitHub? Pushes will stop deploying this project.')">
+    <button class="btn btn-small" type="submit">Unlink</button>
+  </form>
+</div></div>
+{% else %}
+{% if github_app and repo_on_github %}
+<div class="card"><div class="card-body">
+  <div class="row-title" style="margin-bottom:6px">GitHub</div>
+  <p class="hint" style="margin:0 0 10px">
+    Link this project to the GitHub App and every push deploys it by itself.
+    The webhook and deploy key below are then not needed.
+  </p>
+  <form method="post" action="/projects/{{ project.slug }}/github/link">
+    <button class="btn btn-primary" type="submit">Link to GitHub</button>
+  </form>
+</div></div>
+{% endif %}
+
 <div class="card"><div class="card-body">
   <div class="row-title" style="margin-bottom:6px">Webhook</div>
   <p class="hint" style="margin:0 0 10px">
@@ -343,6 +370,7 @@
   </form>
   {% endif %}
 </div></div>
+{% endif %}
 
 <div class="card"><div class="card-body">
   <div class="row-title" style="margin-bottom:6px">Delete this project</div>

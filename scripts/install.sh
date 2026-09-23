@@ -26,7 +26,8 @@ trap 'echo "install failed on line $LINENO: $BASH_COMMAND" >&2' ERR
 
 DEPLOYPRO_HOME="${DEPLOYPRO_HOME:-/opt/deploypro}"
 DEPLOYPRO_REPO="${DEPLOYPRO_REPO:-https://github.com/ICOFCUCAM/deploygenus.git}"
-DEPLOYPRO_BRANCH="${DEPLOYPRO_BRANCH:-main}"
+# An upgrade stays on the branch already checked out unless told otherwise.
+DEPLOYPRO_BRANCH="${DEPLOYPRO_BRANCH:-$(git -C "$DEPLOYPRO_HOME" symbolic-ref --short -q HEAD 2>/dev/null || echo main)}"
 ENV_ONLY=0
 [ "${1:-}" = "--env-only" ] && ENV_ONLY=1
 
@@ -186,6 +187,27 @@ fi
 
 say "6/7 starting DeployPro"
 mkdir -p "${DEPLOYPRO_BACKUP_HOST_DIR:-/var/backups/deploypro}"
+# The dashboard at an address of its own (DEPLOYPRO_DASHBOARD_DOMAIN in .env,
+# e.g. your bare domain), as well as at deploypro.<deploy domain>. Written as
+# a compose override so the tracked docker-compose.yml never changes, and
+# rewritten on every run so .env stays the one place it is set.
+OVERRIDE=docker-compose.override.yml
+if [ -n "${DEPLOYPRO_DASHBOARD_DOMAIN:-}" ]; then
+    cat >"$OVERRIDE" <<EOF
+# Written by scripts/install.sh from DEPLOYPRO_DASHBOARD_DOMAIN in .env.
+# Rewritten on every run: change .env, not this file.
+services:
+  api:
+    labels:
+      traefik.http.routers.deploypro-home.rule: Host(\`$DEPLOYPRO_DASHBOARD_DOMAIN\`)
+      traefik.http.routers.deploypro-home.entrypoints: websecure
+      traefik.http.routers.deploypro-home.tls.certresolver: le
+      traefik.http.routers.deploypro-home.service: deploypro-api
+EOF
+    note "dashboard also at https://$DEPLOYPRO_DASHBOARD_DOMAIN"
+elif grep -qs "Written by scripts/install.sh" "$OVERRIDE"; then
+    rm -f "$OVERRIDE"
+fi
 docker compose up -d --build --remove-orphans
 # Migrate until it works: it fails only while Postgres is still starting, and
 # it is safe to repeat. The worker restarts itself until the schema exists.
@@ -213,7 +235,7 @@ cat <<EOF
 
 $(printf '\033[32m')DeployPro is running.$(printf '\033[0m')
 
-  Dashboard   https://deploypro.$DEPLOYPRO_DEPLOY_DOMAIN
+  Dashboard   https://${DEPLOYPRO_DASHBOARD_DOMAIN:-deploypro.$DEPLOYPRO_DEPLOY_DOMAIN}
   Sign in     the DEPLOYPRO_API_TOKEN in $DEPLOYPRO_HOME/.env
 
   Now, before anything else:

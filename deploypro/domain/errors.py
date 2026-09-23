@@ -68,3 +68,10 @@ class DeployFailed(DeployProError):
 
     status_code = 422
     code = "deploy_failed"
+
+
+class GitHubError(DeployProError):
+    """GitHub refused or failed a request the GitHub App made."""
+
+    status_code = 502
+    code = "github_error"

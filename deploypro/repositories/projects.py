@@ -16,7 +16,8 @@ PROJECT_COLUMNS = """
     framework, install_command, build_command, start_command, port,
     memory_mb, cpu_shares, keep_warm, stop_timeout_seconds, deploy_key_public,
     production_deployment_id,
-    webhook_secret, created_at, updated_at
+    webhook_secret, created_at, updated_at,
+    github_installation_id, github_repo
 """
 
 

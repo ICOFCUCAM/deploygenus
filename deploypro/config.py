@@ -127,6 +127,19 @@ class Settings:
     backup_hour: int = 3
     backup_keep: int = 7
 
+    # -- GitHub ---------------------------------------------------------------
+
+    #: Where GitHub's web pages and its REST API are. Changed only for GitHub
+    #: Enterprise Server, or for a stand-in in tests.
+    github_url: str = "https://github.com"
+    github_api_url: str = "https://api.github.com"
+
+    #: The dashboard's own address, as GitHub must reach it: the app's
+    #: webhook and the pages GitHub sends the browser back to. Empty means
+    #: DEPLOYPRO_DASHBOARD_DOMAIN if that is set (the installer routes it to
+    #: the dashboard), else `deploypro.<deploy domain>`, where it always is.
+    public_url: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
@@ -144,6 +157,18 @@ class Settings:
 
     def deployment_url(self, short_id: str) -> str:
         return f"{self.scheme}://{self.deployment_host(short_id)}"
+
+    @property
+    def dashboard_url(self) -> str:
+        return self.public_url or f"{self.scheme}://deploypro.{self.deploy_domain}"
+
+
+def _public_url(scheme: str) -> str:
+    explicit = _optional("DEPLOYPRO_PUBLIC_URL", "").rstrip("/")
+    if explicit:
+        return explicit
+    domain = _optional("DEPLOYPRO_DASHBOARD_DOMAIN", "").strip().strip("/").lower()
+    return f"{scheme}://{domain}" if domain else ""
 
 
 @lru_cache(maxsize=1)
@@ -192,4 +217,9 @@ def get_settings() -> Settings:
         ),
         backup_hour=_int("DEPLOYPRO_BACKUP_HOUR", 3) % 24,
         backup_keep=max(_int("DEPLOYPRO_BACKUP_KEEP", 7), 1),
+        github_url=_optional("DEPLOYPRO_GITHUB_URL", "https://github.com").rstrip("/"),
+        github_api_url=_optional(
+            "DEPLOYPRO_GITHUB_API_URL", "https://api.github.com"
+        ).rstrip("/"),
+        public_url=_public_url("https" if cert_resolver else "http"),
     )

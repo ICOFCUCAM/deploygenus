@@ -31,12 +31,16 @@ real Postgres.** `scripts/e2e/run.sh` deploys a test app from a git push, then:
 - restores a deleted volume from a backup, and restores the database dump
 - deploys a private repository over SSH with its deploy key, and refuses a git
   server whose identity has changed
+- connects a GitHub App through the manifest flow, imports a private
+  repository from the list, deploys it with a token for that repository only,
+  and deploys again from a signed push, against a stand-in for GitHub that
+  checks the app's JWT and tokens the way GitHub does
 
-It makes 79 checks in about three minutes, and passed ten runs in a
+It makes 102 checks in about four minutes. The first 79 passed ten runs in a
 row. Its runs have found five bugs that would have hit real installations.
 All five are fixed.
 
-293 unit tests cover everything that does not need a daemon. What is still
+345 unit tests cover everything that does not need a daemon. What is still
 unproven, chiefly HTTPS and DeployPro's own container image, is listed under
 [What is proven and what is not](#what-is-proven-and-what-is-not).
 
@@ -200,6 +204,10 @@ HTTP-01.
 
 ## Your first deploy
 
+The quickest way is the dashboard: **New project → Connect GitHub**, once,
+then **Import** next to any repository (see [The GitHub App](#the-github-app)).
+From the command line:
+
 ```bash
 deploypro project create --name "Blog" --repo https://github.com/you/blog.git
 deploypro deploy blog
@@ -235,10 +243,57 @@ Paste both into the repository's **Settings → Webhooks**. Pushes to the
 production branch deploy and promote; pushes to any other branch get a preview
 URL and cannot see production-scoped variables.
 
-### Private repositories
+### The GitHub App
 
-Use the repository's SSH URL and a **deploy key**, a key DeployPro makes for
-that one project:
+Connect GitHub once and it works the way Vercel's import screen does: your
+repositories are listed with an **Import** button, every push deploys by
+itself, and private repositories need nothing more. No deploy keys, and no
+webhook to add to each repository.
+
+1. In the dashboard, **New project → Connect GitHub → Create the app on
+   GitHub**. DeployPro sends GitHub a description of the app it needs (a
+   "manifest"); GitHub creates it under your account and hands its private
+   key and webhook secret straight back to this server. They exist nowhere
+   else, and are stored encrypted with the master key.
+2. GitHub asks where to install it. Choose your account and **All
+   repositories**, or only the ones to deploy. You can change this later with
+   **Choose repositories on GitHub** on the New project page.
+3. Back on New project, press **Import** next to a repository. Name, branch
+   and root directory are filled in; **Deploy** builds it straight away.
+
+What it may do, and what it may not:
+
+- **It only reads.** The app asks for repository contents and metadata, read
+  only, and is sent push events. It cannot write to any repository.
+- **It is private.** Only the account that made it can install it, so nobody
+  else can point it at their code and have it built on your server.
+- **Clones use a token for one repository.** Each clone gets an hour-long
+  token that can read that one repository and nothing else. It is passed to git
+  as a header through the environment, so it is never in the repository URL,
+  never on a command line, never in the checkout's git config and never in a
+  log.
+- **Pushes are verified.** The app's webhook is signed with its own secret. A
+  push is matched to projects by the repository's `owner/name`. Pushes to the
+  production branch go live, and pushes to other branches deploy as previews.
+
+A project created from a GitHub URL (in the dashboard or with `deploypro
+project create`) is linked to the app automatically when the app can read the
+repository. An older project gets a **Link to GitHub** button on its page, or:
+
+```bash
+deploypro github                  # the app, where it is installed, linked projects
+deploypro github link balancevid  # have the app read and deploy this project
+deploypro github unlink balancevid
+```
+
+For an organisation's repositories, make the app in the organisation: on the
+Connect GitHub page, enter the organisation's name first.
+
+### Private repositories without the GitHub App
+
+For a git host other than GitHub, or if you would rather not use the app, use
+the repository's SSH URL and a **deploy key**, a key DeployPro makes for that
+one project:
 
 ```bash
 deploypro project create --name BalanceVid --repo git@github.com:you/balancevid.git
@@ -598,6 +653,12 @@ Run `./scripts/e2e/run.sh` on any host with Docker for the end-to-end run.
 - rollback to a deployment whose container had been reclaimed, in about a
   second, with the workers rolling back too
 - a forged webhook refused, and a signed one deployed
+- the GitHub App: made from a manifest (a code without the dashboard's state
+  refused), installed (an installation GitHub does not know refused), a
+  private repository imported and deployed with a single-repository token, a
+  signed push deployed, a forged one refused, and an uninstall noticed. The
+  GitHub in this run is a stand-in (`scripts/e2e/fakegithub.py`); the real
+  github.com has not been run against yet
 
 Checked by hand: every container came back after the Docker daemon was
 restarted, and DeployPro found nothing to repair.

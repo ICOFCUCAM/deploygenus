@@ -1,5 +1,5 @@
-"""How git reaches a project's repository: over SSH with its deploy key, and
-only ever to a host whose key it recognises.
+"""How git reaches a project's repository: through the GitHub App, or over
+SSH with its deploy key, and only ever to a host whose key it recognises.
 
 The private key is decrypted into a 0600 file in a fresh 0700 directory for
 the length of one git command, and removed however that command ends. It is
@@ -63,6 +63,14 @@ def ssh_command(*, known_hosts: Path, identity: Path | None) -> str:
 @asynccontextmanager
 async def git_env(project: Project, settings: Settings) -> AsyncIterator[dict[str, str]]:
     """Environment for git commands against this project's repository."""
+    if project.github_installation_id is not None and not is_ssh_url(project.repo_url):
+        # Imported through the GitHub App: an hour-long token that reads this
+        # one repository, sent as a header (see domain.github.git_auth_env).
+        from deploypro.engine import github
+
+        yield await github.git_env(project, settings)
+        return
+
     if not is_ssh_url(project.repo_url):
         yield {}
         return

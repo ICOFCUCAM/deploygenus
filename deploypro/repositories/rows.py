@@ -48,6 +48,8 @@ def to_project(row: dict[str, Any]) -> Project:
         webhook_secret=row["webhook_secret"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        github_installation_id=row["github_installation_id"],
+        github_repo=row["github_repo"],
     )
 
 

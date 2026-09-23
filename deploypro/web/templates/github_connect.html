@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Connect GitHub — DeployPro{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/">Projects</a> / <a href="/projects/new">new</a> / GitHub</div>
+<div class="page-head"><h1>Connect GitHub</h1></div>
+
+<div class="card"><div class="card-body">
+  <p style="margin-top:0">
+    DeployPro makes its own GitHub App, owned by
+    {% if org %}the <span class="mono">{{ org }}</span> organisation{% else %}your GitHub account{% endif %}.
+    Its private key and secret are created by GitHub and sent straight to this
+    server, and exist nowhere else.
+  </p>
+  <ol class="dim" style="font-size:14px;line-height:1.7">
+    <li>Press the button. GitHub shows the app it is about to make,
+        <span class="mono">{{ app_name }}</span>. You can rename it there.</li>
+    <li>Press <b>Create GitHub App</b> on GitHub.</li>
+    <li>GitHub asks where to install it: choose your account, then
+        <b>All repositories</b> or just the ones to deploy.</li>
+    <li>You come back to New project, with your repositories listed.</li>
+  </ol>
+  <dl class="kv">
+    <dt>It may</dt>
+    <dd>read repository contents and metadata. Nothing is ever written to GitHub.</dd>
+    <dt>It hears</dt>
+    <dd>pushes, at <span class="mono">{{ dashboard_url }}/github/webhook</span></dd>
+    <dt>Visibility</dt>
+    <dd>private: only its owner can install it</dd>
+  </dl>
+
+  <form method="post" action="{{ action }}">
+    <input type="hidden" name="manifest" value="{{ manifest }}">
+    <button class="btn btn-primary" type="submit">Create the app on GitHub</button>
+  </form>
+</div></div>
+
+<div class="card"><div class="card-body">
+  <form method="get" action="/github/connect" class="inline-form">
+    <label for="org" class="hint">For an organisation's repositories, make the app there instead:</label>
+    <input type="text" id="org" name="org" value="{{ org }}" placeholder="organisation name">
+    <button class="btn btn-small" type="submit">Use this organisation</button>
+  </form>
+</div></div>
+{% endblock %}

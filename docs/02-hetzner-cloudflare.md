@@ -177,6 +177,38 @@ crontab -e               # then add:
 30 4 * * * rclone sync /var/backups/deploypro r2:deploypro-backups --quiet
 ```
 
+## 8. The dashboard at your own domain
+
+The dashboard is always at `https://deploypro.deploys.<your domain>`. To also
+have it at the bare domain (`https://deploypro.us`), where visitors get the
+sign-in page:
+
+1. Cloudflare → DNS → **Add record**: type **A**, name **@**, IPv4 the
+   server's IP, proxy **DNS only**.
+2. On the server, add one line to `/opt/deploypro/.env`:
+   ```bash
+   echo 'DEPLOYPRO_DASHBOARD_DOMAIN=deploypro.us' >> /opt/deploypro/.env
+   ```
+3. Run the installer again: `cd /opt/deploypro && bash scripts/install.sh`.
+
+The first visit can take a minute while the certificate is issued. Do this
+before connecting GitHub (next step), so the GitHub App is created with this
+address.
+
+## 9. Connect GitHub
+
+Dashboard → **New project → Connect GitHub → Create the app on GitHub**, then
+on GitHub **Create GitHub App**, then **Install** on your account with the
+repositories DeployPro may read. You come back to New project with those
+repositories listed; **Import** deploys one.
+
+Projects created before this (BalanceVid) are linked with one command, and
+then deploy on every push:
+
+```bash
+deploypro github link balancevid
+```
+
 ## When something is wrong
 
 | Symptom | Look at |

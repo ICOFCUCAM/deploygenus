@@ -152,7 +152,14 @@ async def cmd_project_create(args: argparse.Namespace, settings: Settings) -> No
         production_branch=args.branch,
         root_directory=args.root or "",
     )
+    from deploypro.engine import github
+
+    project = await github.try_link(project, settings)
     print(f"created {project.slug} ({project.id})")
+    if project.github_repo:
+        print(f"  linked to {project.github_repo} through the GitHub App")
+        print("  every push deploys by itself; private repositories need nothing more")
+        return
     print(f"  webhook  POST /webhooks/{project.slug}")
     print(f"  secret   {project.webhook_secret}")
     if is_ssh_url(project.repo_url):
@@ -609,6 +616,7 @@ async def cmd_doctor(args: argparse.Namespace, settings: Settings) -> None:
 
     await _doctor_volumes()
     _doctor_housekeeping(settings)
+    await _doctor_github()
 
     stuck = await deployment_repo.reclaim_abandoned(
         older_than_seconds=settings.build_timeout_seconds + 120
@@ -659,6 +667,47 @@ async def _doctor_volumes() -> None:
         print(f"draining            {len(draining)} container(s) finishing work:")
         for name in sorted(draining):
             print(f"  {name}")
+
+
+async def _doctor_github() -> None:
+    from deploypro.repositories import github as github_repo
+
+    app = await github_repo.get_app()
+    if app is None:
+        print(
+            "github              not connected — dashboard: New project → Connect GitHub"
+        )
+        return
+    installs = await github_repo.list_installations()
+    where = ", ".join(i.account_login for i in installs) or "NOT INSTALLED anywhere yet"
+    print(f"github              app {app.slug}, installed on {where}")
+
+
+async def cmd_github(args: argparse.Namespace, settings: Settings) -> None:
+    from deploypro.engine import github
+    from deploypro.repositories import github as github_repo
+
+    if args.action == "status":
+        await _doctor_github()
+        app = await github_repo.get_app()
+        if app is None:
+            return
+        for project in await project_repo.list_all():
+            if project.github_repo and project.github_installation_id:
+                print(f"  {project.slug:20} {project.github_repo}")
+        return
+
+    if not args.project:
+        raise DeployProError(f"deploypro github {args.action} needs a project")
+    project = await project_repo.resolve(args.project)
+    if args.action == "link":
+        project = await github.link(project, settings)
+        print(f"linked {project.slug} to {project.github_repo}")
+        print("  every push now deploys by itself; the project's own webhook")
+        print("  and deploy key are no longer needed and can be removed on GitHub")
+    else:
+        await github_repo.unlink_project(project.id)
+        print(f"unlinked {project.slug} — pushes no longer deploy it")
 
 
 def _doctor_housekeeping(settings: Settings) -> None:
@@ -891,6 +940,15 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("test-alert", help="send a test alert").set_defaults(
         handler=cmd_test_alert
     )
+
+    github_cmd = sub.add_parser(
+        "github", help="the GitHub App: status, or link a project to it"
+    )
+    github_cmd.add_argument(
+        "action", nargs="?", default="status", choices=["status", "link", "unlink"]
+    )
+    github_cmd.add_argument("project", nargs="?")
+    github_cmd.set_defaults(handler=cmd_github)
 
     webhook = sub.add_parser("webhook", help="print a project's webhook settings")
     webhook.add_argument("project")

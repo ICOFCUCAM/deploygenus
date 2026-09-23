@@ -116,6 +116,12 @@ class Project:
     webhook_secret: str
     created_at: datetime
     updated_at: datetime
+    #: Set when the project was imported through the GitHub App (or linked to
+    #: it later): the installation that reads the repository, and the
+    #: repository's `owner/name`, which is what a push event names. Such a
+    #: project needs neither a deploy key nor a webhook of its own.
+    github_installation_id: int | None = None
+    github_repo: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

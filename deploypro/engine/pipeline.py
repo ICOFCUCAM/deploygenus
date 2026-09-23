@@ -145,7 +145,11 @@ async def _checkout(
     log: LogWriter,
     settings: Settings,
 ) -> Path:
-    key = " with its deploy key" if project.deploy_key_public else ""
+    key = ""
+    if project.github_installation_id is not None:
+        key = " through the GitHub App"
+    elif project.deploy_key_public:
+        key = " with its deploy key"
     await log.system(
         f"cloning {redact(project.repo_url)} at {deployment.git_sha[:8]}{key}"
     )

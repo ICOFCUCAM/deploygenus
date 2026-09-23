@@ -149,6 +149,14 @@ def repos(monkeypatch):
     monkeypatch.setattr(
         "deploypro.web.routes.process_repo.last_run", lambda _id: _async(state["runs"][0])
     )
+    # No GitHub App unless a test connects one.
+    monkeypatch.setattr(
+        "deploypro.repositories.github.get_app", lambda: _async(state.get("github_app"))
+    )
+    monkeypatch.setattr(
+        "deploypro.repositories.github.list_installations",
+        lambda: _async(state.get("installations", [])),
+    )
     return state
 
 
@@ -185,7 +193,26 @@ class TestAccess:
         async with anon as http:
             response = await http.get(path)
         assert response.status_code == 303
-        assert response.headers["location"] == "/login"
+        location = response.headers["location"]
+        assert (
+            location == "/login" if path == "/" else location.startswith("/login?next=")
+        )
+
+    async def test_signing_in_returns_to_the_page_that_was_asked_for(self, anon):
+        async with anon as http:
+            response = await http.post(
+                "/login",
+                data={"token": TOKEN, "next": "/github/installed?installation_id=7"},
+            )
+        assert response.headers["location"] == "/github/installed?installation_id=7"
+
+    @pytest.mark.parametrize(
+        "target", ["//evil.example", "https://evil.example", "/\\evil"]
+    )
+    async def test_signing_in_never_leaves_the_dashboard(self, anon, target):
+        async with anon as http:
+            response = await http.post("/login", data={"token": TOKEN, "next": target})
+        assert response.headers["location"] == "/"
 
     async def test_the_sign_in_page_is_public(self, anon):
         async with anon as http:

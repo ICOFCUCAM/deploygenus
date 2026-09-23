@@ -31,10 +31,12 @@ HTTP_PORT="${E2E_HTTP_PORT:-18080}"
 GIT_PORT="${E2E_GIT_PORT:-18443}"
 SINK_PORT="${E2E_SINK_PORT:-18090}"
 SSH_PORT="${E2E_SSH_PORT:-18022}"
+GH_PORT="${E2E_GH_PORT:-18444}"
 PG_PORT="${E2E_PG_PORT:-55433}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7}"
 TRAEFIK_RELEASE="${TRAEFIK_RELEASE:-v3.7.13}"
 SLUG=e2e-bv
+GH_SLUG=e2e-gh
 DOMAIN=e2e-bv.test
 WORK="$(mktemp -d /var/tmp/deploypro-e2e.XXXXXX)"
 PIDS=()
@@ -143,7 +145,10 @@ cleanup() {
         return
     fi
     for pid in "${PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done
-    docker ps -aq --filter "label=deploypro.project=$SLUG" | xargs -r docker rm -f >/dev/null 2>&1 || true
+    for project in "$SLUG" "$GH_SLUG"; do
+        docker ps -aq --filter "label=deploypro.project=$project" | xargs -r docker rm -f >/dev/null 2>&1 || true
+        docker images -q "deploypro/$project" | sort -u | xargs -r docker rmi -f >/dev/null 2>&1 || true
+    done
     docker rm -f deploypro-e2e-router >/dev/null 2>&1 || true
     docker volume ls -q --filter "label=deploypro.project=$SLUG" | xargs -r docker volume rm >/dev/null 2>&1 || true
     docker images -q "deploypro/$SLUG" | sort -u | xargs -r docker rmi -f >/dev/null 2>&1 || true
@@ -240,6 +245,16 @@ wait_for 10 "git server is answering" git ls-remote "https://127.0.0.1:$GIT_PORT
 
 python3 "$HERE/alertsink.py" "$SINK_PORT" "$WORK/alerts.log" &
 PIDS+=($!)
+
+# A stand-in for GitHub: its API and a private repository behind app tokens.
+"$VENV/bin/python" "$HERE/fakegithub.py" "$WORK/git" "$GH_PORT" \
+    "$WORK/git/cert.pem" "$WORK/git/key.pem" "$WORK/gh-secret" &
+PIDS+=($!)
+export DEPLOYPRO_GITHUB_URL="https://127.0.0.1:$GH_PORT"
+export DEPLOYPRO_GITHUB_API_URL="https://127.0.0.1:$GH_PORT/api"
+export SSL_CERT_FILE="$WORK/git/ca.pem" # how httpx is told to trust it
+wait_for 10 "the stand-in GitHub is answering" \
+    curl -s --cacert "$WORK/git/ca.pem" "https://127.0.0.1:$GH_PORT/api/nothing"
 
 restart_worker
 
@@ -484,5 +499,83 @@ step "the dashboard"
 COOKIE="$(curl -s -c - -o /dev/null -X POST -d "token=$DEPLOYPRO_API_TOKEN" http://127.0.0.1:18000/login | awk '/deploypro/ {print $6"="$7}' | tail -1)"
 check "the project page shows the volume" \
     bash -c "curl -s -b '$COOKIE' http://127.0.0.1:18000/projects/$SLUG | grep -q deploypro_${SLUG}_recordings"
+
+step "the GitHub App: connect, import a private repository, deploy on push"
+DASH=http://127.0.0.1:18000
+JAR="$WORK/cookies"
+curl -s -c "$JAR" -o /dev/null -X POST -d "token=$DEPLOYPRO_API_TOKEN" "$DASH/login"
+check "without the app, New project offers to connect GitHub" \
+    bash -c "curl -s -b '$JAR' $DASH/projects/new | grep -q 'Connect GitHub'"
+curl -s -b "$JAR" -c "$JAR" "$DASH/github/connect" >"$WORK/connect.html"
+STATE="$(awk '$6 == "deploypro_github_state" {print $7}' "$JAR")"
+check "the connect page sends a manifest to GitHub with a state" \
+    grep -q "127.0.0.1:$GH_PORT/settings/apps/new?state=$STATE" "$WORK/connect.html"
+redirect() { curl -s -b "$JAR" -o /dev/null -w '%{redirect_url}' "$DASH$1"; }
+check "a code arriving without the right state is refused" \
+    bash -c "[[ '$(redirect "/github/created?code=good-code&state=forged")' == */github/connect* ]]"
+check "the app is created from GitHub's code, then sent to be installed" \
+    test "$(redirect "/github/created?code=good-code&state=$STATE")" = \
+    "https://127.0.0.1:$GH_PORT/apps/deploypro-e2e/installations/new"
+check "its private key is stored encrypted" \
+    test "$(sql "select position('PRIVATE KEY' in convert_from(private_key_encrypted, 'UTF8')) from github_app")" = 0
+check "an installation GitHub does not know is refused" \
+    bash -c "[[ '$(redirect "/github/installed?installation_id=999&setup_action=install")' == *err=* ]]"
+check "the installation is recorded" \
+    bash -c "[[ '$(redirect "/github/installed?installation_id=77&setup_action=install")' == *ok=* ]]"
+check "New project lists the repository with an Import button" \
+    bash -c "curl -s -b '$JAR' $DASH/projects/new | grep -q 'repo=e2e-owner/private-app&installation=77'"
+check "the repository really is private" \
+    bash -c "! GIT_TERMINAL_PROMPT=0 git ls-remote https://127.0.0.1:$GH_PORT/e2e-owner/private-app.git 2>/dev/null"
+
+gh_status() { sql "select d.status from deployments d join projects p on p.id = d.project_id where p.slug = '$GH_SLUG' order by d.number desc limit 1"; }
+gh_live_host() { echo "$(sql "select d.short_id from deployments d join projects p on p.production_deployment_id = d.id where p.slug = '$GH_SLUG'").deploys.test"; }
+wait_gh_live() {
+    local deadline=$((SECONDS + 150))
+    until [ "$(sql "select count(*) from projects p join deployments d on d.id = p.production_deployment_id where p.slug = '$GH_SLUG' and d.git_message is not distinct from $1")" = 1 ]; do
+        [ "$(gh_status)" = failed ] && fail "the $GH_SLUG deploy failed: $(sql "select error from deployments d join projects p on p.id = d.project_id where p.slug = '$GH_SLUG' order by d.number desc limit 1")"
+        [ "$SECONDS" -ge "$deadline" ] && fail "the $GH_SLUG deploy did not go live in 150s"
+        sleep 1
+    done
+}
+IMPORTED="$(curl -s -b "$JAR" -o /dev/null -w '%{redirect_url}' -X POST \
+    -d "repo=e2e-owner/private-app&installation=77&name=E2E+GitHub&slug=$GH_SLUG" \
+    "$DASH/projects/new/github")"
+check "Import makes the project and goes straight to its first deployment" \
+    bash -c "[[ '$IMPORTED' == */deployments/$GH_SLUG-* ]]"
+wait_gh_live NULL
+pass "the private repository built and went live"
+wait_for 15 "and serves through the router" serves "$(gh_live_host)" "version="
+check "the project is linked to the repository" \
+    test "$(sql "select github_repo from projects where slug = '$GH_SLUG'")" = e2e-owner/private-app
+check "the log says it cloned through the app" \
+    test "$(sql "select count(*) from deployment_logs where line like '%through the GitHub App%'")" -ge 1
+check "no log line contains a token" \
+    test "$(sql "select count(*) from deployment_logs where line like '%ghs_%' or line like '%x-access-token%'")" = 0
+check "the page says pushes deploy it" \
+    bash -c "curl -s -b '$JAR' $DASH/projects/$GH_SLUG | grep -q 'through the GitHub App'"
+
+commit_version v9-app
+SHA="$(git -C "$WORK/src" rev-parse HEAD)"
+BODY="{\"ref\":\"refs/heads/main\",\"after\":\"$SHA\",\"repository\":{\"full_name\":\"e2e-owner/private-app\"},\"head_commit\":{\"id\":\"$SHA\",\"message\":\"v9-app\",\"author\":{\"name\":\"e2e\"}}}"
+SIG="$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$(cat "$WORK/gh-secret")" | awk '{print $NF}')"
+apphook() {
+    curl -s -o "$WORK/apphook.json" -w '%{http_code}' -X POST -H "X-GitHub-Event: $1" \
+        -H "X-Hub-Signature-256: sha256=$2" -H "Content-Type: application/json" \
+        -d "$3" "$DASH/github/webhook"
+}
+check "a push signed with another secret is refused" test "$(apphook push deadbeef "$BODY")" = 401
+check "a push signed with the app's secret is accepted" test "$(apphook push "$SIG" "$BODY")" = 202
+check "and queued a deployment of that project only" grep -q "\"project\":\"$GH_SLUG\",\"deployment\"" "$WORK/apphook.json"
+wait_gh_live "'v9-app'"
+wait_for 15 "the push went live with no webhook set up on the repository" \
+    serves "$(gh_live_host)" "version=v9-app"
+
+UNINSTALL='{"action":"deleted","installation":{"id":77,"account":{"login":"e2e-owner"}}}'
+USIG="$(printf '%s' "$UNINSTALL" | openssl dgst -sha256 -hmac "$(cat "$WORK/gh-secret")" | awk '{print $NF}')"
+apphook installation "$USIG" "$UNINSTALL" >/dev/null
+check "uninstalling the app on GitHub is noticed" \
+    test "$(sql "select count(*) from github_installations")" = 0
+check "and the project stops treating pushes as its own" \
+    test -z "$(sql "select github_installation_id from projects where slug = '$GH_SLUG'")"
 
 printf '\n\033[32mall %s checks passed\033[0m\n' "$PASSED"

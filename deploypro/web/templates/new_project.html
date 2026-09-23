@@ -1,10 +1,92 @@
 {% extends "base.html" %}
-{% block title %}New project — DeployPro{% endblock %}
+{% block title %}New project — DeployPro{% if app %}
+<div class="card"><div class="card-body">
+  <div class="row-title" style="margin-bottom:6px">GitHub App</div>
+  <p class="hint" style="margin:0 0 10px">
+    Connected as <a href="{{ app.html_url }}" rel="noreferrer" class="mono">{{ app.slug }}</a>
+    {% if installations %}— installed on
+      {% for i in installations %}<span class="mono">{{ i.account_login }}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.
+  </p>
+  <form method="post" action="/github/disconnect"
+        onsubmit="return confirm('Disconnect the GitHub App? Imported projects stop deploying on push until it is connected again.')">
+    <button class="btn btn-small btn-danger" type="submit">Disconnect</button>
+  </form>
+</div></div>
+{% endif %}
+{% endblock %}
 {% block content %}
 <div class="breadcrumb"><a href="/">Projects</a> / new</div>
 <div class="page-head"><h1>New project</h1></div>
 
 <div class="card"><div class="card-body">
+  <div class="page-head" style="margin:0 0 10px">
+    <div class="row-title">Import a GitHub repository</div>
+    <div class="spacer"></div>
+    {% if app and installations %}
+    <a class="btn btn-small" href="{{ install_url }}" rel="noreferrer">Choose repositories on GitHub</a>
+    {% endif %}
+  </div>
+
+  {% if not app %}
+  <p class="hint" style="margin:0 0 10px">
+    Connect GitHub once, and every repository you allow shows up here with an
+    Import button. Pushes then deploy by themselves, private repositories
+    included, with no deploy keys or webhooks to set up.
+  </p>
+  <a class="btn btn-primary" href="/github/connect">Connect GitHub</a>
+
+  {% elif not installations %}
+  <p class="hint" style="margin:0 0 10px">
+    The GitHub App <span class="mono">{{ app.slug }}</span> exists. Install it on
+    your account and pick the repositories DeployPro may read.
+  </p>
+  <a class="btn btn-primary" href="{{ install_url }}" rel="noreferrer">Install on GitHub</a>
+
+  {% else %}
+  <form method="get" action="/projects/new" class="inline-form" style="margin-bottom:10px">
+    <input type="text" name="q" value="{{ q }}" placeholder="Search repositories">
+    <button class="btn btn-small" type="submit">Search</button>
+  </form>
+  {% if repo_error %}
+    <div class="notice notice-bad">{{ repo_error }}</div>
+  {% elif not repos %}
+    <p class="hint">
+      {% if q %}No repository matches “{{ q }}”.{% else %}The app cannot see any
+      repositories yet. Choose some on GitHub.{% endif %}
+    </p>
+  {% else %}
+  <div class="rows">
+    {% for repo in repos[:50] %}
+    <div class="row">
+      <div class="row-main">
+        <div class="row-title">
+          {{ repo.full_name }}
+          {% if repo.private %}<span class="pill pill-plain">private</span>{% endif %}
+        </div>
+        <div class="row-sub">
+          {{ repo.default_branch }}{% if repo.pushed_at %} · pushed {{ repo.pushed_at[:10] }}{% endif %}
+        </div>
+      </div>
+      <div class="row-aside">
+        {% if repo.project_slug %}
+          <a class="btn btn-small" href="/projects/{{ repo.project_slug }}">Open</a>
+        {% else %}
+          <a class="btn btn-small btn-primary"
+             href="/projects/new/github?repo={{ repo.full_name | urlencode }}&installation={{ repo.installation_id }}">Import</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if repos | length > 50 %}
+    <p class="hint">Showing 50 of {{ repos | length }}. Search to find the rest.</p>
+  {% endif %}
+  {% endif %}
+  {% endif %}
+</div></div>
+
+<div class="card"><div class="card-body">
+<div class="row-title" style="margin-bottom:10px">Or deploy from any Git URL</div>
 <form method="post" action="/projects/new">
   <div class="field">
     <label for="name">Name</label>
@@ -57,4 +139,18 @@
     <span class="mono">Dockerfile</span> and it will be used unchanged.
   </p>
 </div></div>
+{% if app %}
+<div class="card"><div class="card-body">
+  <div class="row-title" style="margin-bottom:6px">GitHub App</div>
+  <p class="hint" style="margin:0 0 10px">
+    Connected as <a href="{{ app.html_url }}" rel="noreferrer" class="mono">{{ app.slug }}</a>
+    {% if installations %}— installed on
+      {% for i in installations %}<span class="mono">{{ i.account_login }}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.
+  </p>
+  <form method="post" action="/github/disconnect"
+        onsubmit="return confirm('Disconnect the GitHub App? Imported projects stop deploying on push until it is connected again.')">
+    <button class="btn btn-small btn-danger" type="submit">Disconnect</button>
+  </form>
+</div></div>
+{% endif %}
 {% endblock %}

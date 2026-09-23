@@ -63,14 +63,30 @@ def _unreadable(project: Project, detail: str) -> str:
     """Why the repository could not be read, and what to do about it."""
     hint = ""
     lowered = detail.lower()
-    if "permission denied" in lowered or "could not read from remote" in lowered:
+    unreadable = (
+        "permission denied",
+        "could not read from remote",
+        "could not read username",
+        "authentication failed",
+        "repository not found",
+    )
+    if project.github_installation_id is not None and any(
+        s in lowered for s in unreadable
+    ):
+        hint = (
+            " The GitHub App could not read it: check that the repository is "
+            "still included in the app's installation on GitHub (Settings → "
+            "Applications → the DeployPro app → Configure)."
+        )
+    elif any(s in lowered for s in unreadable):
         hint = (
             " If the repository is private, give DeployPro read access: "
             f"`deploypro project key {project.slug}` prints a deploy key to add "
             "to it."
             if is_ssh_url(project.repo_url)
-            else " If it is private, switch the project to the repository's SSH URL "
-            "and add a deploy key."
+            else " If it is private, connect the GitHub App (New project → "
+            f"Connect GitHub) and run `deploypro github link {project.slug}`, or "
+            "switch the project to the repository's SSH URL and add a deploy key."
         )
     elif "host key" in lowered:
         hint = (
