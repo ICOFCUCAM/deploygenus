@@ -1,4 +1,4 @@
--- Forge core schema.
+-- DeployPro core schema.
 --
 -- The shape follows one rule: a deployment is immutable. Nothing about a
 -- deployment is ever rewritten after it reaches a terminal state, because the

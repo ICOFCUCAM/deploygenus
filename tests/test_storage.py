@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from forge.domain.errors import InvalidRequest
-from forge.domain.storage import (
+from deploypro.domain.errors import InvalidRequest
+from deploypro.domain.storage import (
     docker_volume_name,
     draining_deadline,
     draining_name,
@@ -66,23 +66,24 @@ class TestVolumeName:
 class TestDockerVolumeName:
     def test_is_owned_by_the_project_not_a_deployment(self):
         assert docker_volume_name("balancevid", "recordings") == (
-            "forge_balancevid_recordings"
+            "deploypro_balancevid_recordings"
         )
 
     def test_two_projects_cannot_arrive_at_the_same_volume(self):
-        # With a hyphen as the separator these would both be forge-a-b-c.
+        # With a hyphen as the separator these would both be deploypro-a-b-c.
         assert docker_volume_name("a-b", "c") != docker_volume_name("a", "b-c")
 
 
 class TestDrainingName:
     def test_round_trips_its_deadline(self):
-        name = draining_name("forge-blog-mailer-0", deadline=1790000000)
+        name = draining_name("deploypro-blog-mailer-0", deadline=1790000000)
         assert draining_deadline(name) == 1790000000
         # As `docker inspect` prints it, with a leading slash.
         assert draining_deadline("/" + name) == 1790000000
 
     @pytest.mark.parametrize(
-        "name", ["forge-blog-mailer-0", "forge-blog-3f9a2c71", "forge-x.draining."]
+        "name",
+        ["deploypro-blog-mailer-0", "deploypro-blog-3f9a2c71", "deploypro-x.draining."],
     )
     def test_an_ordinary_container_is_not_draining(self, name):
         assert draining_deadline(name) is None

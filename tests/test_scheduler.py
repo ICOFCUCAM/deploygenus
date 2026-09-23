@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from forge.adapters.containers import command_argv
-from forge.engine import scheduler
+from deploypro.adapters.containers import command_argv
+from deploypro.engine import scheduler
 from tests import fakes
 
 
@@ -38,8 +38,8 @@ def queue(monkeypatch):
         finished.append(kwargs)
         return fakes.job_run()
 
-    monkeypatch.setattr("forge.engine.scheduler.process_repo.claim_slot", claim_slot)
-    monkeypatch.setattr("forge.engine.scheduler.process_repo.finish_run", finish_run)
+    monkeypatch.setattr("deploypro.engine.scheduler.process_repo.claim_slot", claim_slot)
+    monkeypatch.setattr("deploypro.engine.scheduler.process_repo.finish_run", finish_run)
     return {"claimed": claimed, "finished": finished}
 
 
@@ -50,8 +50,8 @@ def with_processes(monkeypatch, processes, project):
     async def get(_id):
         return project
 
-    monkeypatch.setattr("forge.engine.scheduler.process_repo.list_scheduled", listed)
-    monkeypatch.setattr("forge.engine.scheduler.project_repo.get", get)
+    monkeypatch.setattr("deploypro.engine.scheduler.process_repo.list_scheduled", listed)
+    monkeypatch.setattr("deploypro.engine.scheduler.project_repo.get", get)
 
 
 class TestSweep:

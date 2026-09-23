@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from forge.adapters.edge import ProductionRoute, clear_route, config_path, write_route
+from deploypro.adapters.edge import ProductionRoute, clear_route, config_path, write_route
 
 
 def route(**kwargs) -> ProductionRoute:
@@ -81,10 +81,10 @@ def test_writing_leaves_no_temporary_file_behind(tmp_path):
 
 
 def test_the_route_file_has_an_extension_traefik_actually_loads(tmp_path):
-    """Traefik's file provider skips `.json` without an error. Forge wrote
+    """Traefik's file provider skips `.json` without an error. DeployPro wrote
     `.json` until the first run against a real Traefik, and no production
     domain was ever routed."""
-    from forge.adapters.edge import TRAEFIK_EXTENSIONS
+    from deploypro.adapters.edge import TRAEFIK_EXTENSIONS
 
     path = write_route(route(), directory=tmp_path, cert_resolver="le")
     assert path.suffix in TRAEFIK_EXTENSIONS

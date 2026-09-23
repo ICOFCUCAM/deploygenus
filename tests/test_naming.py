@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from forge.domain.naming import MAX_LABEL, deployment_short_id, image_tag, slugify
+from deploypro.domain.naming import MAX_LABEL, deployment_short_id, image_tag, slugify
 
 LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 

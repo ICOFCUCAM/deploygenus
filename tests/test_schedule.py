@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from forge.domain.schedule import InvalidSchedule, describe, parse
+from deploypro.domain.schedule import InvalidSchedule, describe, parse
 
 
 def at(text: str) -> datetime:

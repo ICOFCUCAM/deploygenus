@@ -1,13 +1,13 @@
 # The whole platform: a router, a database, the control plane and a worker.
 #
 #   docker compose up -d
-#   docker compose exec api forge migrate
+#   docker compose exec api deploypro migrate
 #
 # Deployed sites are NOT in this file. They are containers the worker creates
 # at deploy time, joined to the same network, which is how the router finds
 # them and how they survive a `docker compose down` of everything here.
 
-name: forge
+name: deploypro
 
 services:
   # ---------------------------------------------------------------------
@@ -25,7 +25,7 @@ services:
       # the host — including Postgres — gets a public hostname derived from
       # its name, which is exactly as bad as it sounds.
       - --providers.docker.exposedByDefault=false
-      - --providers.docker.network=${FORGE_NETWORK:-forge}
+      - --providers.docker.network=${DEPLOYPRO_NETWORK:-deploypro}
       # Where promotions are published. Watched, so a promotion takes effect
       # without restarting anything.
       - --providers.file.directory=/etc/traefik/dynamic
@@ -35,20 +35,20 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       # One wildcard certificate, inherited by every deployment router. See
-      # the comment in forge/adapters/containers.py for why per-deployment
+      # the comment in deploypro/adapters/containers.py for why per-deployment
       # certificates would take the platform down within a fortnight.
       - --entrypoints.websecure.http.tls.certResolver=wildcard
-      - --entrypoints.websecure.http.tls.domains[0].main=${FORGE_DEPLOY_DOMAIN}
-      - --entrypoints.websecure.http.tls.domains[0].sans=*.${FORGE_DEPLOY_DOMAIN}
+      - --entrypoints.websecure.http.tls.domains[0].main=${DEPLOYPRO_DEPLOY_DOMAIN}
+      - --entrypoints.websecure.http.tls.domains[0].sans=*.${DEPLOYPRO_DEPLOY_DOMAIN}
       # Wildcards can only be proven over DNS-01.
-      - --certificatesresolvers.wildcard.acme.email=${FORGE_ACME_EMAIL}
+      - --certificatesresolvers.wildcard.acme.email=${DEPLOYPRO_ACME_EMAIL}
       - --certificatesresolvers.wildcard.acme.storage=/acme/wildcard.json
       - --certificatesresolvers.wildcard.acme.dnschallenge=true
-      - --certificatesresolvers.wildcard.acme.dnschallenge.provider=${FORGE_DNS_PROVIDER}
+      - --certificatesresolvers.wildcard.acme.dnschallenge.provider=${DEPLOYPRO_DNS_PROVIDER}
       # Customers' own domains resolve to this host but their DNS is somewhere
       # this platform has no token for, so they are proven over HTTP-01
       # instead. Low volume: one certificate per domain, not per deploy.
-      - --certificatesresolvers.le.acme.email=${FORGE_ACME_EMAIL}
+      - --certificatesresolvers.le.acme.email=${DEPLOYPRO_ACME_EMAIL}
       - --certificatesresolvers.le.acme.storage=/acme/le.json
       - --certificatesresolvers.le.acme.httpchallenge=true
       - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
@@ -69,7 +69,7 @@ services:
       - router-config:/etc/traefik/dynamic:ro
       - acme:/acme
     networks:
-      - forge
+      - deploypro
 
   # ---------------------------------------------------------------------
   # State
@@ -78,18 +78,18 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: forge
-      POSTGRES_DB: forge
+      POSTGRES_USER: deploypro
+      POSTGRES_DB: deploypro
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U forge -d forge"]
+      test: ["CMD-SHELL", "pg_isready -U deploypro -d deploypro"]
       interval: 5s
       timeout: 3s
       retries: 20
     networks:
-      - forge
+      - deploypro
 
   # ---------------------------------------------------------------------
   # The control plane: API, and the worker that actually builds
@@ -102,20 +102,20 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://forge:${POSTGRES_PASSWORD}@postgres:5432/forge
+      DATABASE_URL: postgresql://deploypro:${POSTGRES_PASSWORD}@postgres:5432/deploypro
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - router-config:/var/lib/forge/router
-      - build-cache:/var/lib/forge/builds
+      - router-config:/var/lib/deploypro/router
+      - build-cache:/var/lib/deploypro/builds
     labels:
       traefik.enable: "true"
-      traefik.docker.network: ${FORGE_NETWORK:-forge}
-      traefik.http.routers.forge-api.rule: Host(`forge.${FORGE_DEPLOY_DOMAIN}`)
-      traefik.http.routers.forge-api.entrypoints: websecure
-      traefik.http.routers.forge-api.tls: "true"
-      traefik.http.services.forge-api.loadbalancer.server.port: "8000"
+      traefik.docker.network: ${DEPLOYPRO_NETWORK:-deploypro}
+      traefik.http.routers.deploypro-api.rule: Host(`deploypro.${DEPLOYPRO_DEPLOY_DOMAIN}`)
+      traefik.http.routers.deploypro-api.entrypoints: websecure
+      traefik.http.routers.deploypro-api.tls: "true"
+      traefik.http.services.deploypro-api.loadbalancer.server.port: "8000"
     networks:
-      - forge
+      - deploypro
 
   worker:
     build: .
@@ -125,25 +125,25 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://forge:${POSTGRES_PASSWORD}@postgres:5432/forge
-    command: ["python", "-m", "forge.worker"]
+      DATABASE_URL: postgresql://deploypro:${POSTGRES_PASSWORD}@postgres:5432/deploypro
+    command: ["python", "-m", "deploypro.worker"]
     volumes:
       # The worker drives the host's Docker daemon: it builds images and runs
       # the containers that serve every site. This socket is the platform.
       - /var/run/docker.sock:/var/run/docker.sock
-      - router-config:/var/lib/forge/router
-      - build-cache:/var/lib/forge/builds
+      - router-config:/var/lib/deploypro/router
+      - build-cache:/var/lib/deploypro/builds
       # A directory on the host, not a named volume: backups are the one thing
       # here that should be easy to find, copy off the machine and read without
-      # Docker. Same path in both, so `forge backup` output means the same
+      # Docker. Same path in both, so `deploypro backup` output means the same
       # thing inside and outside the container.
-      - ${FORGE_BACKUP_HOST_DIR:-/var/backups/forge}:${FORGE_BACKUP_DIR:-/var/backups/forge}
+      - ${DEPLOYPRO_BACKUP_HOST_DIR:-/var/backups/deploypro}:${DEPLOYPRO_BACKUP_DIR:-/var/backups/deploypro}
     networks:
-      - forge
+      - deploypro
 
 networks:
-  forge:
-    name: ${FORGE_NETWORK:-forge}
+  deploypro:
+    name: ${DEPLOYPRO_NETWORK:-deploypro}
     # Deployment containers join this network by name, created by the worker
     # rather than by compose, so it must be a plain named network both agree on.
     external: false

@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "forge"
+name = "deploypro"
 version = "0.1.0"
-description = "Forge — a self-hosted deployment platform"
+description = "DeployPro — a self-hosted deployment platform"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
@@ -27,10 +27,10 @@ dev = [
 ]
 
 [project.scripts]
-forge = "forge.cli:main"
+deploypro = "deploypro.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["forge*"]
+include = ["deploypro*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -45,7 +45,7 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.importlinter]
-root_packages = ["forge"]
+root_packages = ["deploypro"]
 include_external_packages = true
 
 # --- Architectural contracts -----------------------------------------------
@@ -54,37 +54,37 @@ include_external_packages = true
 [[tool.importlinter.contracts]]
 name = "The domain layer knows no vendor"
 type = "forbidden"
-source_modules = ["forge.domain"]
+source_modules = ["deploypro.domain"]
 # Detection and Dockerfile generation are pure functions over a directory.
 # Once they can reach the database or the Docker daemon, "what would this
 # repository build as?" stops being answerable without both running.
 forbidden_modules = [
     "psycopg", "psycopg_pool", "fastapi", "starlette", "httpx", "docker",
-    "forge.adapters", "forge.repositories", "forge.engine", "forge.routers",
+    "deploypro.adapters", "deploypro.repositories", "deploypro.engine", "deploypro.routers",
 ]
 
 [[tool.importlinter.contracts]]
 name = "Only the engine drives Docker and git"
 type = "forbidden"
-source_modules = ["forge.domain", "forge.repositories", "forge.routers"]
-forbidden_modules = ["forge.adapters.containers", "forge.adapters.source"]
+source_modules = ["deploypro.domain", "deploypro.repositories", "deploypro.routers"]
+forbidden_modules = ["deploypro.adapters.containers", "deploypro.adapters.source"]
 # Direct imports only. The engine is *supposed* to drive both, and a router is
 # supposed to call the engine, so forbidding the chain would forbid the design.
 # What this catches is a route or a query reaching past the engine to run a
 # container itself, which is where the ordering guarantees in
-# forge.engine.promote quietly stop applying.
+# deploypro.engine.promote quietly stop applying.
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Layers run one way"
 type = "layers"
 layers = [
-    "forge.main",
-    "forge.web",
-    "forge.routers",
-    "forge.engine",
-    "forge.repositories",
-    "forge.adapters",
-    "forge.domain",
+    "deploypro.main",
+    "deploypro.web",
+    "deploypro.routers",
+    "deploypro.engine",
+    "deploypro.repositories",
+    "deploypro.adapters",
+    "deploypro.domain",
 ]
 exhaustive = false

@@ -5,8 +5,8 @@ from __future__ import annotations
 import stat
 import subprocess
 
-from forge.domain.models import EnvTarget
-from forge.engine.environment import (
+from deploypro.domain.models import EnvTarget
+from deploypro.engine.environment import (
     Environment,
     _split,
     platform_variables,
@@ -84,5 +84,5 @@ def test_the_platform_tells_a_deployment_its_own_url():
         url="https://blog-abc123.deploys.example.com",
         target=EnvTarget.PREVIEW,
     )
-    assert variables["FORGE_URL"] == "https://blog-abc123.deploys.example.com"
-    assert variables["FORGE_ENV"] == "preview"
+    assert variables["DEPLOYPRO_URL"] == "https://blog-abc123.deploys.example.com"
+    assert variables["DEPLOYPRO_ENV"] == "preview"

@@ -29,7 +29,7 @@ CREATE TABLE volumes (
                 CHECK (name ~ '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$'),
 
     -- Absolute and canonical (no trailing slash, no '..'), validated in
-    -- forge.domain.storage. The check here is the backstop: no comma, because
+    -- deploypro.domain.storage. The check here is the backstop: no comma, because
     -- `docker run --mount` is comma-separated.
     mount_path  text        NOT NULL
                 CHECK (mount_path ~ '^/[A-Za-z0-9._/-]+$' AND mount_path !~ '/$'),

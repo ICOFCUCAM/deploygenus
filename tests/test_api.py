@@ -19,14 +19,14 @@ def app():
     os.environ.update(
         {
             "DATABASE_URL": "postgresql://unused/unused",
-            "FORGE_MASTER_KEY": "unused",
-            "FORGE_API_TOKEN": TOKEN,
-            "FORGE_DEPLOY_DOMAIN": "deploys.example.com",
+            "DEPLOYPRO_MASTER_KEY": "unused",
+            "DEPLOYPRO_API_TOKEN": TOKEN,
+            "DEPLOYPRO_DEPLOY_DOMAIN": "deploys.example.com",
             "ENVIRONMENT": "development",
         }
     )
-    from forge.config import get_settings
-    from forge.main import app as application
+    from deploypro.config import get_settings
+    from deploypro.main import app as application
 
     get_settings.cache_clear()
     return application
@@ -36,7 +36,7 @@ def app():
 async def client(app):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
-        transport=transport, base_url="http://forge.test"
+        transport=transport, base_url="http://deploypro.test"
     ) as http:
         yield http
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from forge.domain.errors import InvalidRequest
-from forge.domain.repo_url import validate_repo_url
+from deploypro.domain.errors import InvalidRequest
+from deploypro.domain.repo_url import validate_repo_url
 
 
 @pytest.mark.parametrize(

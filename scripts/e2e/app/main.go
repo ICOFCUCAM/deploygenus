@@ -41,7 +41,7 @@ func web() {
 			names = append(names, e.Name())
 		}
 		sort.Strings(names)
-		fmt.Fprintf(w, "version=%s deployment=%s files=%s\n", version, os.Getenv("FORGE_DEPLOYMENT"), strings.Join(names, ","))
+		fmt.Fprintf(w, "version=%s deployment=%s files=%s\n", version, os.Getenv("DEPLOYPRO_DEPLOYMENT"), strings.Join(names, ","))
 	})
 	http.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
 		name := filepath.Base(r.URL.Query().Get("name"))

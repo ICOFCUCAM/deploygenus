@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from forge.domain.detect import Overrides, detect
-from forge.domain.errors import DetectionFailed
+from deploypro.domain.detect import Overrides, detect
+from deploypro.domain.errors import DetectionFailed
 
 
 def test_next_standalone_is_detected_from_the_config_not_the_dependency(
@@ -219,11 +219,11 @@ def test_project_settings_override_a_detected_framework(repo, package_json):
     assert plan.port == 4321
 
 
-def test_forge_json_is_read_when_project_settings_are_silent(repo, package_json):
+def test_deploypro_json_is_read_when_project_settings_are_silent(repo, package_json):
     app = repo(
         {
             "package.json": package_json(),
-            "forge.json": '{"startCommand": "node serve.js", "port": 7000}',
+            "deploypro.json": '{"startCommand": "node serve.js", "port": 7000}',
         }
     )
     plan = detect(app)

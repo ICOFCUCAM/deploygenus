@@ -154,7 +154,7 @@ the start, and carrying multi-tenancy for a single-tenant platform would mean
 paying for row-level security, quotas and build-sandbox isolation in every
 query for a property nobody is using.
 
-Adding accounts later means adding a table and changing `forge/deps.py`, and
+Adding accounts later means adding a table and changing `deploypro/deps.py`, and
 nothing else: every route already asks for "the caller" rather than for a
 token. The schema leaves room in the same way — nothing in it assumes a single
 owner, it simply does not name one.
@@ -248,12 +248,12 @@ Workers get no such treatment: they are always on, so capturing their output
 the same way would mean an unbounded, permanently-growing log table. Their
 output stays in the container log, where Docker's rotation already applies.
 
-## Volumes belong to the project, and are never deleted by Forge
+## Volumes belong to the project, and are never deleted by DeployPro
 
-Forge used to assume every app was stateless. That is true of websites and
+DeployPro used to assume every app was stateless. That is true of websites and
 false of anything that records, uploads or renders, and those apps lose all
 their data on the next deploy. A volume is named after the project
-(`forge_<slug>_<name>`), not a deployment, because the point is that
+(`deploypro_<slug>_<name>`), not a deployment, because the point is that
 deployment 14 and deployment 15 see the same files.
 
 The separator is an underscore because neither a slug nor a volume name can
@@ -301,7 +301,7 @@ that never waits on a build.
 ## The route file is YAML by name and JSON by content
 
 Traefik's file provider loads `.yml`, `.yaml` and `.toml`, and skips every
-other file with a debug-level log line and no error. Forge wrote `.json` until
+other file with a debug-level log line and no error. DeployPro wrote `.json` until
 the first end-to-end run, so no production route had ever been read. Every
 unit test passed throughout, because they checked what was in the file and
 not whether Traefik would open it.
@@ -320,7 +320,7 @@ that. Its test app is a static Go binary in a `FROM scratch` image. So it runs
 on a host with no Docker Hub access, which is where it was first developed.
 
 It serves its test repository over HTTPS with a throwaway certificate, rather
-than weakening Forge's refusal of `file://` URLs for its own convenience. A
+than weakening DeployPro's refusal of `file://` URLs for its own convenience. A
 test that relaxes a safety check is not testing the thing that ships.
 
 ## Alerts fire once and resolve once
@@ -341,7 +341,7 @@ The state is in memory. A worker restarted mid-outage alerts once more, which
 is the right way round to be wrong.
 
 The message goes out as both `text` and `content`, because Slack reads one and
-Discord the other. One setting then works for either, and Forge never needs to
+Discord the other. One setting then works for either, and DeployPro never needs to
 know which it is talking to.
 
 ## Backups carry the data and never the key
@@ -370,12 +370,12 @@ notice the backup hour together.
 ## An image belongs to the installation that built it
 
 The image sweep deletes images of projects that no longer exist. The first
-version identified Forge images by name alone (`forge/*`). Running the
+version identified DeployPro images by name alone (`deploypro/*`). Running the
 end-to-end suite, with its own database, on a host that also ran a manual test
 showed the danger: to the suite's database, every other installation's images
 belong to deleted projects.
 
-Every build is now labelled `forge.instance=<network>`, and the sweep lists
+Every build is now labelled `deploypro.instance=<network>`, and the sweep lists
 only its own. The network name is already unique per installation on a host.
 An image without the label, built earlier or by hand, is never swept.
 Unknown means not ours to delete.

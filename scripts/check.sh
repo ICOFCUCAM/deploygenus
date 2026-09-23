@@ -5,8 +5,8 @@ cd "$(dirname "$0")/.."
 VENV="${VENV:-.venv}"
 
 echo "── ruff ────────────────────────────────────────────"
-"$VENV/bin/ruff" check forge tests
-"$VENV/bin/ruff" format --check forge tests
+"$VENV/bin/ruff" check deploypro tests
+"$VENV/bin/ruff" format --check deploypro tests
 
 echo "── import contracts ────────────────────────────────"
 "$VENV/bin/lint-imports"

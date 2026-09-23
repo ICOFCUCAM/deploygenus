@@ -13,9 +13,9 @@
 # starts a throwaway cluster). Nothing is pulled from a registry except the
 # Traefik image, which is built from the GitHub release if it cannot be pulled.
 #
-# Everything it creates is namespaced (`forge-e2e` network, `e2e-bv` project,
+# Everything it creates is namespaced (`deploypro-e2e` network, `e2e-bv` project,
 # its own ports) and removed at the end, so it can run on a host that also
-# runs Forge for real. Set KEEP=1 to leave it all running for a look around.
+# runs DeployPro for real. Set KEEP=1 to leave it all running for a look around.
 #
 #   ./scripts/e2e/run.sh
 set -Eeuo pipefail
@@ -26,7 +26,7 @@ trap 'fail "unexpected error on line $LINENO: $BASH_COMMAND"' ERR
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 VENV="${VENV:-$REPO/.venv}"
-FORGE="$VENV/bin/forge"
+DEPLOYPRO="$VENV/bin/deploypro"
 HTTP_PORT="${E2E_HTTP_PORT:-18080}"
 GIT_PORT="${E2E_GIT_PORT:-18443}"
 SINK_PORT="${E2E_SINK_PORT:-18090}"
@@ -35,7 +35,7 @@ TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7}"
 TRAEFIK_RELEASE="${TRAEFIK_RELEASE:-v3.7.13}"
 SLUG=e2e-bv
 DOMAIN=e2e-bv.test
-WORK="$(mktemp -d /var/tmp/forge-e2e.XXXXXX)"
+WORK="$(mktemp -d /var/tmp/deploypro-e2e.XXXXXX)"
 PIDS=()
 PASSED=0
 
@@ -79,15 +79,15 @@ lacks() { ! get "$1" / | grep -q -- "$2"; }
 sql() { psql "$DATABASE_URL" -tAc "$1"; }
 deployment_host() { echo "$(sql "select short_id from deployments where number = $1").deploys.test"; }
 latest_status() { sql "select status from deployments order by number desc limit 1"; }
-draining() { docker ps --format '{{.Names}}' --filter "label=forge.project=$SLUG" | grep -q '\.draining\.'; }
+draining() { docker ps --format '{{.Names}}' --filter "label=deploypro.project=$SLUG" | grep -q '\.draining\.'; }
 alerted() { grep -q -- "$1" "$WORK/alerts.log" 2>/dev/null; }
 web_container() { sql "select container_id from deployments d join projects p on p.production_deployment_id = d.id"; }
-forge_images() { docker images -q --filter "label=forge.instance=forge-e2e" | sort -u; }
-no_draining() { ! docker ps -a --format '{{.Names}}' --filter "label=forge.project=$SLUG" | grep -q '\.draining\.'; }
+deploypro_images() { docker images -q --filter "label=deploypro.instance=deploypro-e2e" | sort -u; }
+no_draining() { ! docker ps -a --format '{{.Names}}' --filter "label=deploypro.project=$SLUG" | grep -q '\.draining\.'; }
 
 # `deploy_expecting_failure` — queue a deploy and wait for it to fail.
 deploy_expecting_failure() {
-    "$FORGE" deploy "$SLUG" >/dev/null
+    "$DEPLOYPRO" deploy "$SLUG" >/dev/null
     local deadline=$((SECONDS + 120))
     until [ "$(latest_status)" = failed ]; do
         [ "$(latest_status)" = ready ] && fail "a deploy that should have failed went live"
@@ -100,7 +100,7 @@ deploy_expecting_failure() {
 # for the production branch, until production has moved to it: promotion runs
 # after "ready", and a check made in between sees the previous deployment.
 deploy() {
-    "$FORGE" deploy "$SLUG" "$@" >/dev/null
+    "$DEPLOYPRO" deploy "$SLUG" "$@" >/dev/null
     local deadline=$((SECONDS + 120))
     while true; do
         case "$(latest_status)" in
@@ -122,7 +122,7 @@ commit_version() {
         git checkout -q "$branch" 2>/dev/null || git checkout -qb "$branch"
         CGO_ENABLED=0 go build -ldflags "-X main.version=$version" -o app .
         git add -A
-        git -c user.email=e2e@forge -c user.name=e2e commit -qm "$version"
+        git -c user.email=e2e@deploypro -c user.name=e2e commit -qm "$version"
         git push -q "$WORK/git/app.git" "$branch"
         git checkout -q main
     )
@@ -130,7 +130,7 @@ commit_version() {
 
 restart_worker() {
     [ -n "${WORKER_PID:-}" ] && kill "$WORKER_PID" 2>/dev/null && wait "$WORKER_PID" 2>/dev/null || true
-    "$VENV/bin/python" -m forge.worker >>"$WORK/worker.log" 2>&1 &
+    "$VENV/bin/python" -m deploypro.worker >>"$WORK/worker.log" 2>&1 &
     WORKER_PID=$!
     PIDS+=("$WORKER_PID")
 }
@@ -142,11 +142,11 @@ cleanup() {
         return
     fi
     for pid in "${PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done
-    docker ps -aq --filter "label=forge.project=$SLUG" | xargs -r docker rm -f >/dev/null 2>&1 || true
-    docker rm -f forge-e2e-router >/dev/null 2>&1 || true
-    docker volume ls -q --filter "label=forge.project=$SLUG" | xargs -r docker volume rm >/dev/null 2>&1 || true
-    docker images -q "forge/$SLUG" | sort -u | xargs -r docker rmi -f >/dev/null 2>&1 || true
-    docker network rm forge-e2e >/dev/null 2>&1 || true
+    docker ps -aq --filter "label=deploypro.project=$SLUG" | xargs -r docker rm -f >/dev/null 2>&1 || true
+    docker rm -f deploypro-e2e-router >/dev/null 2>&1 || true
+    docker volume ls -q --filter "label=deploypro.project=$SLUG" | xargs -r docker volume rm >/dev/null 2>&1 || true
+    docker images -q "deploypro/$SLUG" | sort -u | xargs -r docker rmi -f >/dev/null 2>&1 || true
+    docker network rm deploypro-e2e >/dev/null 2>&1 || true
     if [ -n "${PG_BIN:-}" ]; then
         run_pg "$PG_BIN/pg_ctl" -D "$WORK/pg/data" -m immediate stop >/dev/null 2>&1 || true
     fi
@@ -174,28 +174,28 @@ if [ -z "${DATABASE_URL:-}" ]; then
     [ -x "$PG_BIN/initdb" ] || fail "set DATABASE_URL, or install Postgres server binaries"
     mkdir -p "$WORK/pg"
     [ "$(id -u)" = 0 ] && chown postgres "$WORK" "$WORK/pg"
-    run_pg "$PG_BIN/initdb" -D "$WORK/pg/data" -A trust -U forge >/dev/null
+    run_pg "$PG_BIN/initdb" -D "$WORK/pg/data" -A trust -U deploypro >/dev/null
     run_pg "$PG_BIN/pg_ctl" -D "$WORK/pg/data" -l "$WORK/pg/log" \
         -o "-p $PG_PORT -k $WORK/pg -c listen_addresses=127.0.0.1" start >/dev/null
-    psql -h 127.0.0.1 -p "$PG_PORT" -U forge -d postgres -qc "create database forge"
-    export DATABASE_URL="postgresql://forge@127.0.0.1:$PG_PORT/forge"
+    psql -h 127.0.0.1 -p "$PG_PORT" -U deploypro -d postgres -qc "create database deploypro"
+    export DATABASE_URL="postgresql://deploypro@127.0.0.1:$PG_PORT/deploypro"
 fi
 
-FORGE_MASTER_KEY="$("$FORGE" keygen)"
-export FORGE_MASTER_KEY
-export FORGE_API_TOKEN=e2e-token
-export FORGE_DEPLOY_DOMAIN=deploys.test
-export FORGE_CERT_RESOLVER=
+DEPLOYPRO_MASTER_KEY="$("$DEPLOYPRO" keygen)"
+export DEPLOYPRO_MASTER_KEY
+export DEPLOYPRO_API_TOKEN=e2e-token
+export DEPLOYPRO_DEPLOY_DOMAIN=deploys.test
+export DEPLOYPRO_CERT_RESOLVER=
 export ENVIRONMENT=development
-export FORGE_NETWORK=forge-e2e
-export FORGE_BUILD_ROOT="$WORK/build"
-export FORGE_ROUTER_CONFIG_DIR="$WORK/router"
-export FORGE_HEALTH_TIMEOUT=60
-export FORGE_ALERT_WEBHOOK_URL="http://127.0.0.1:$SINK_PORT/hook"
-export FORGE_MONITOR_INTERVAL=2
-export FORGE_KEEP_IMAGES=2
-mkdir -p "$FORGE_BUILD_ROOT" "$FORGE_ROUTER_CONFIG_DIR"
-"$FORGE" migrate >/dev/null
+export DEPLOYPRO_NETWORK=deploypro-e2e
+export DEPLOYPRO_BUILD_ROOT="$WORK/build"
+export DEPLOYPRO_ROUTER_CONFIG_DIR="$WORK/router"
+export DEPLOYPRO_HEALTH_TIMEOUT=60
+export DEPLOYPRO_ALERT_WEBHOOK_URL="http://127.0.0.1:$SINK_PORT/hook"
+export DEPLOYPRO_MONITOR_INTERVAL=2
+export DEPLOYPRO_KEEP_IMAGES=2
+mkdir -p "$DEPLOYPRO_BUILD_ROOT" "$DEPLOYPRO_ROUTER_CONFIG_DIR"
+"$DEPLOYPRO" migrate >/dev/null
 pass "migrations applied"
 
 # The router, as docker-compose.yml runs it, minus TLS.
@@ -207,23 +207,23 @@ if ! docker image inspect "$TRAEFIK_IMAGE" >/dev/null 2>&1 &&
     printf 'FROM scratch\nCOPY traefik /traefik\nENTRYPOINT ["/traefik"]\n' >"$WORK/traefik/Dockerfile"
     docker build -q -t "$TRAEFIK_IMAGE" "$WORK/traefik" >/dev/null
 fi
-docker network create forge-e2e >/dev/null
-docker run -d --name forge-e2e-router --network forge-e2e -p "127.0.0.1:$HTTP_PORT:80" \
+docker network create deploypro-e2e >/dev/null
+docker run -d --name deploypro-e2e-router --network deploypro-e2e -p "127.0.0.1:$HTTP_PORT:80" \
     -v /var/run/docker.sock:/var/run/docker.sock:ro \
-    -v "$FORGE_ROUTER_CONFIG_DIR:/etc/traefik/dynamic:ro" "$TRAEFIK_IMAGE" \
+    -v "$DEPLOYPRO_ROUTER_CONFIG_DIR:/etc/traefik/dynamic:ro" "$TRAEFIK_IMAGE" \
     --providers.docker=true --providers.docker.exposedByDefault=false \
-    --providers.docker.network=forge-e2e \
+    --providers.docker.network=deploypro-e2e \
     --providers.file.directory=/etc/traefik/dynamic --providers.file.watch=true \
     --entrypoints.web.address=:80 >/dev/null
 wait_for 20 "router is answering" get nothing.deploys.test /
 check "router talks to this Docker daemon" \
-    bash -c "! docker logs forge-e2e-router 2>&1 | grep -q 'client version .* is too old'"
+    bash -c "! docker logs deploypro-e2e-router 2>&1 | grep -q 'client version .* is too old'"
 
-# The test repository, served over HTTPS because Forge refuses file://.
+# The test repository, served over HTTPS because DeployPro refuses file://.
 mkdir -p "$WORK/git"
 cp -r "$HERE/app" "$WORK/src"
 (cd "$WORK/src" && git init -q -b main . && git add -A &&
-    git -c user.email=e2e@forge -c user.name=e2e commit -qm init)
+    git -c user.email=e2e@deploypro -c user.name=e2e commit -qm init)
 git clone -q --bare "$WORK/src" "$WORK/git/app.git"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=127.0.0.1" \
     -addext "subjectAltName=IP:127.0.0.1" \
@@ -245,10 +245,10 @@ restart_worker
 # ---------------------------------------------------------------------------
 
 step "first deploy, with a volume"
-"$FORGE" project create --name "E2E BalanceVid" --slug "$SLUG" \
+"$DEPLOYPRO" project create --name "E2E BalanceVid" --slug "$SLUG" \
     --repo "https://127.0.0.1:$GIT_PORT/app.git" >/dev/null
-"$FORGE" volume add "$SLUG" recordings /data >/dev/null
-"$FORGE" project set "$SLUG" --stop-timeout 120 >/dev/null
+"$DEPLOYPRO" volume add "$SLUG" recordings /data >/dev/null
+"$DEPLOYPRO" project set "$SLUG" --stop-timeout 120 >/dev/null
 commit_version v1
 deploy
 V1="$(deployment_host 1)"
@@ -256,14 +256,14 @@ wait_for 15 "deployment #1 serves on its own URL through the router" serves "$V1
 check "the app can write to the volume" uploads "$V1" wedding
 
 step "production domain, worker and cron"
-"$FORGE" domain add "$SLUG" "$DOMAIN" --primary >/dev/null
+"$DEPLOYPRO" domain add "$SLUG" "$DOMAIN" --primary >/dev/null
 sql "update domains set verified_at = now()" >/dev/null # DNS cannot be checked here
-"$FORGE" process add "$SLUG" render --type worker --command worker >/dev/null
-"$FORGE" process add "$SLUG" tidy --type cron --command job --schedule "* * * * *" \
+"$DEPLOYPRO" process add "$SLUG" render --type worker --command worker >/dev/null
+"$DEPLOYPRO" process add "$SLUG" tidy --type cron --command job --schedule "* * * * *" \
     --timeout 30 >/dev/null
 commit_version v2
 deploy
-check "the route file has an extension Traefik loads" test -f "$FORGE_ROUTER_CONFIG_DIR/project-$SLUG.yml"
+check "the route file has an extension Traefik loads" test -f "$DEPLOYPRO_ROUTER_CONFIG_DIR/project-$SLUG.yml"
 wait_for 15 "the production domain serves v2" serves "$DOMAIN" "version=v2"
 wait_for 15 "the worker started" logged "v2 worker started"
 wait_for 45 "the worker rendered the recording from before it existed" \
@@ -284,11 +284,11 @@ wait_for 20 "the finished container was cleaned up" no_draining
 
 step "rollback"
 started=$SECONDS
-"$FORGE" promote "$SLUG" '#1' >/dev/null
+"$DEPLOYPRO" promote "$SLUG" '#1' >/dev/null
 check "rollback took under 10s ($((SECONDS - started))s)" test $((SECONDS - started)) -lt 10
 wait_for 10 "the production domain serves v1 again" serves "$DOMAIN" "version=v1"
 check "every file survived" serves "$DOMAIN" "birthday.mp4,events.log,wedding.mp4"
-"$FORGE" promote "$SLUG" '#3' >/dev/null
+"$DEPLOYPRO" promote "$SLUG" '#3' >/dev/null
 wait_for 10 "and forward to v3" serves "$DOMAIN" "version=v3"
 
 step "a preview never sees production's files"
@@ -307,8 +307,8 @@ wait_for 90 "a scheduled run succeeded" bash -c "psql '$DATABASE_URL' -tAc \"sel
 check "and it wrote into the same volume the web process reads" logged "job ran and saw"
 
 step "a stop timeout is enforced"
-"$FORGE" project set "$SLUG" --stop-timeout 5 >/dev/null
-echo 120s | "$FORGE" env set "$SLUG" RENDER_TIME - --target production >/dev/null
+"$DEPLOYPRO" project set "$SLUG" --stop-timeout 5 >/dev/null
+echo 120s | "$DEPLOYPRO" env set "$SLUG" RENDER_TIME - --target production >/dev/null
 commit_version v4
 deploy
 wait_for 15 "the v4 worker started" logged "v4 worker started"
@@ -323,7 +323,7 @@ check "within the 5s timeout plus one 5s sweep ($((SECONDS - started))s)" test $
 check "the worker log says so" grep -q "still running at the end of their stop timeout" "$WORK/worker.log"
 
 step "webhooks"
-"$VENV/bin/uvicorn" forge.main:app --host 127.0.0.1 --port 18000 >"$WORK/api.log" 2>&1 &
+"$VENV/bin/uvicorn" deploypro.main:app --host 127.0.0.1 --port 18000 >"$WORK/api.log" 2>&1 &
 PIDS+=($!)
 wait_for 15 "the API is up" curl -sf http://127.0.0.1:18000/ready
 commit_version v6-webhook
@@ -341,7 +341,7 @@ check "a signed push is accepted" test "$(hook "$SIG")" = 202
 wait_for 90 "and deployed" serves "$DOMAIN" "version=v6-webhook"
 
 step "alerts"
-"$FORGE" test-alert >/dev/null
+"$DEPLOYPRO" test-alert >/dev/null
 wait_for 10 "a test alert reaches the webhook" alerted "Test alert"
 
 PROD="$(web_container)"
@@ -352,9 +352,9 @@ wait_for 30 "and reported back when it serves again" alerted "E2E BalanceVid is 
 check "a site that is down is reported once, not every check" \
     test "$(grep -c 'E2E BalanceVid is down' "$WORK/alerts.log")" = 1
 
-docker stop -t 1 "forge-$SLUG-render-0" >/dev/null
+docker stop -t 1 "deploypro-$SLUG-render-0" >/dev/null
 wait_for 30 "a stopped worker is reported" alerted "worker render is not running"
-docker start "forge-$SLUG-render-0" >/dev/null
+docker start "deploypro-$SLUG-render-0" >/dev/null
 wait_for 30 "and its recovery" alerted "worker render is running again"
 
 commit_version crash
@@ -364,33 +364,33 @@ check "and production kept serving the last good version" serves "$DOMAIN" "vers
 check "the stop-timeout kill earlier was reported too" alerted "killed at the end of their stop timeout"
 
 step "cleaning up old images"
-before="$(forge_images | wc -l)"
-"$FORGE" housekeeping >"$WORK/housekeeping.log"
-after="$(forge_images | wc -l)"
+before="$(deploypro_images | wc -l)"
+"$DEPLOYPRO" housekeeping >"$WORK/housekeeping.log"
+after="$(deploypro_images | wc -l)"
 check "old images were removed ($before -> $after)" test "$after" -lt "$before"
 check "every cleanup step ran without an error" bash -c "! grep -q error '$WORK/housekeeping.log'"
 check "including the log and job-run retention queries" grep -q "job runs deleted" "$WORK/housekeeping.log"
 check "production's image survived" \
     docker image inspect "$(sql "select image_tag from deployments d join projects p on p.production_deployment_id = d.id")"
 check "production still serves" serves "$DOMAIN" "version=v6-webhook"
-"$FORGE" promote "$SLUG" '#1' >"$WORK/promote.log" 2>&1 || true
+"$DEPLOYPRO" promote "$SLUG" '#1' >"$WORK/promote.log" 2>&1 || true
 check "rolling back to a removed image says to redeploy instead" \
     grep -q "Redeploy the commit instead" "$WORK/promote.log"
 
 step "backup, and a restore after losing the volume"
-"$FORGE" backup --dest "$WORK/backups" >"$WORK/backup.log"
-BACKUP="$(ls -d "$WORK"/backups/forge-* | tail -1)"
+"$DEPLOYPRO" backup --dest "$WORK/backups" >"$WORK/backup.log"
+BACKUP="$(ls -d "$WORK"/backups/deploypro-* | tail -1)"
 check "a backup was written" test -f "$BACKUP/manifest.json"
-check "it has the database" test -s "$BACKUP/forge.dump"
+check "it has the database" test -s "$BACKUP/deploypro.dump"
 check "it has the volume, with the recordings in it" \
-    bash -c "tar -tzf '$BACKUP/volumes/forge_${SLUG}_recordings.tar.gz' | grep -q 'data/wedding.mp4'"
-check "it does not have the master key" bash -c "! grep -rq '$FORGE_MASTER_KEY' '$BACKUP'"
+    bash -c "tar -tzf '$BACKUP/volumes/deploypro_${SLUG}_recordings.tar.gz' | grep -q 'data/wedding.mp4'"
+check "it does not have the master key" bash -c "! grep -rq '$DEPLOYPRO_MASTER_KEY' '$BACKUP'"
 
 # The disaster: every container of the project and the volume, gone.
-docker ps -aq --filter "label=forge.project=$SLUG" | xargs -r docker rm -f >/dev/null
-docker volume rm "forge_${SLUG}_recordings" >/dev/null
-check "the volume is really gone" bash -c "! docker volume inspect forge_${SLUG}_recordings"
-"$FORGE" restore-volume "$BACKUP" "$SLUG" recordings >/dev/null
+docker ps -aq --filter "label=deploypro.project=$SLUG" | xargs -r docker rm -f >/dev/null
+docker volume rm "deploypro_${SLUG}_recordings" >/dev/null
+check "the volume is really gone" bash -c "! docker volume inspect deploypro_${SLUG}_recordings"
+"$DEPLOYPRO" restore-volume "$BACKUP" "$SLUG" recordings >/dev/null
 commit_version v7-restored
 deploy
 wait_for 20 "after restoring and deploying, the site is back" serves "$DOMAIN" "version=v7-restored"
@@ -398,17 +398,17 @@ check "with the first recording" serves "$DOMAIN" "wedding.mp4"
 check "and the one rendered during a deploy" serves "$DOMAIN" "birthday.mp4"
 check "and the app can still write there (ownership survived)" uploads "$DOMAIN" after-restore
 
-psql "$DATABASE_URL" -qc "create database forge_restored"
-RESTORED="${DATABASE_URL%/*}/forge_restored"
-pg_restore --no-owner -d "$RESTORED" "$BACKUP/forge.dump"
+psql "$DATABASE_URL" -qc "create database deploypro_restored"
+RESTORED="${DATABASE_URL%/*}/deploypro_restored"
+pg_restore --no-owner -d "$RESTORED" "$BACKUP/deploypro.dump"
 check "the database dump restores into an empty database" \
     test "$(psql "$RESTORED" -tAc "select count(*) from deployments")" -ge 8
 check "with the project, its volume and its encrypted variables" \
     test "$(psql "$RESTORED" -tAc "select count(*) from projects p join volumes v on v.project_id = p.id join env_vars e on e.project_id = p.id")" = 1
 
 step "the dashboard"
-COOKIE="$(curl -s -c - -o /dev/null -X POST -d "token=$FORGE_API_TOKEN" http://127.0.0.1:18000/login | awk '/forge/ {print $6"="$7}' | tail -1)"
+COOKIE="$(curl -s -c - -o /dev/null -X POST -d "token=$DEPLOYPRO_API_TOKEN" http://127.0.0.1:18000/login | awk '/deploypro/ {print $6"="$7}' | tail -1)"
 check "the project page shows the volume" \
-    bash -c "curl -s -b '$COOKIE' http://127.0.0.1:18000/projects/$SLUG | grep -q forge_${SLUG}_recordings"
+    bash -c "curl -s -b '$COOKIE' http://127.0.0.1:18000/projects/$SLUG | grep -q deploypro_${SLUG}_recordings"
 
 printf '\n\033[32mall %s checks passed\033[0m\n' "$PASSED"

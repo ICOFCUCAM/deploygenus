@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from forge.domain import naming
-from forge.domain.models import DeploymentStatus
-from forge.domain.retention import images_to_keep, images_to_remove
+from deploypro.domain import naming
+from deploypro.domain.models import DeploymentStatus
+from deploypro.domain.retention import images_to_keep, images_to_remove
 from tests import fakes
 
 
@@ -33,7 +33,7 @@ class TestKeep:
     def test_keeps_the_newest_rollback_targets(self):
         deployments = history(15)
         kept = images_to_keep(fakes.project(), deployments, keep=3)
-        assert kept == {f"forge/blog:{n:012x}" for n in (15, 14, 13)}
+        assert kept == {f"deploypro/blog:{n:012x}" for n in (15, 14, 13)}
 
     def test_always_keeps_production_however_old(self):
         deployments = history(15)
@@ -44,9 +44,11 @@ class TestKeep:
     def test_keeps_anything_with_a_container(self):
         deployments = history(15)
         deployments[-2] = fakes.deployment(
-            id=uuid4(), number=2, image_tag="forge/blog:warm", container_id="c1"
+            id=uuid4(), number=2, image_tag="deploypro/blog:warm", container_id="c1"
         )
-        assert "forge/blog:warm" in images_to_keep(fakes.project(), deployments, keep=1)
+        assert "deploypro/blog:warm" in images_to_keep(
+            fakes.project(), deployments, keep=1
+        )
 
     def test_keeps_a_build_whose_row_does_not_name_its_image_yet(self):
         building = fakes.deployment(
@@ -70,7 +72,7 @@ class TestKeep:
             container_id=None,
         )
         kept = images_to_keep(fakes.project(), [queued, *history(15)], keep=0)
-        assert "forge/blog:000000000001" in kept
+        assert "deploypro/blog:000000000001" in kept
 
     def test_failed_deployments_are_not_rollback_targets(self):
         failed = history(3, status=DeploymentStatus.FAILED)
@@ -84,11 +86,11 @@ class TestKeep:
 
 class TestRemove:
     def test_removes_only_what_is_not_kept(self):
-        present = ["forge/blog:a", "forge/blog:b", "forge/shop:c"]
-        keep = {"blog": {"forge/blog:a"}, "shop": {"forge/shop:c"}}
-        assert images_to_remove(present, keep) == ["forge/blog:b"]
+        present = ["deploypro/blog:a", "deploypro/blog:b", "deploypro/shop:c"]
+        keep = {"blog": {"deploypro/blog:a"}, "shop": {"deploypro/shop:c"}}
+        assert images_to_remove(present, keep) == ["deploypro/blog:b"]
 
     def test_a_deleted_projects_images_all_go(self):
-        present = ["forge/gone:a", "forge/gone:b", "forge/blog:a"]
-        keep = {"blog": {"forge/blog:a"}}
-        assert images_to_remove(present, keep) == ["forge/gone:a", "forge/gone:b"]
+        present = ["deploypro/gone:a", "deploypro/gone:b", "deploypro/blog:a"]
+        keep = {"blog": {"deploypro/blog:a"}}
+        assert images_to_remove(present, keep) == ["deploypro/gone:a", "deploypro/gone:b"]

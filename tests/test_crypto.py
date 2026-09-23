@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from cryptography.fernet import Fernet
 
-from forge.adapters.crypto import DecryptionFailed, decrypt, encrypt
-from forge.config import ConfigError
+from deploypro.adapters.crypto import DecryptionFailed, decrypt, encrypt
+from deploypro.config import ConfigError
 
 
 def test_a_value_survives_a_round_trip():
@@ -33,7 +33,7 @@ def test_a_rotated_key_fails_loudly_rather_than_returning_nothing():
     written = encrypt("postgres://…", key=Fernet.generate_key().decode())
     with pytest.raises(DecryptionFailed) as exc:
         decrypt(written, key=Fernet.generate_key().decode())
-    assert "FORGE_MASTER_KEY" in str(exc.value)
+    assert "DEPLOYPRO_MASTER_KEY" in str(exc.value)
 
 
 def test_a_malformed_key_explains_how_to_make_a_good_one():

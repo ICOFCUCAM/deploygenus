@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Install or upgrade Forge on a fresh Ubuntu (22.04, 24.04) or Debian (12, 13)
+# Install or upgrade DeployPro on a fresh Ubuntu (22.04, 24.04) or Debian (12, 13)
 # server. Run it as root:
 #
-#   FORGE_DEPLOY_DOMAIN=deploys.example.com \
-#   FORGE_ACME_EMAIL=you@example.com \
+#   DEPLOYPRO_DEPLOY_DOMAIN=deploys.example.com \
+#   DEPLOYPRO_ACME_EMAIL=you@example.com \
 #   CF_DNS_API_TOKEN=… \
 #   bash scripts/install.sh
 #
@@ -13,20 +13,20 @@
 #
 # What it does, in order:
 #   1. installs Docker Engine and the compose plugin from Docker's own repo
-#   2. puts Forge in /opt/forge (or updates it)
-#   3. writes /opt/forge/.env with freshly generated secrets, mode 0600
+#   2. puts DeployPro in /opt/deploypro (or updates it)
+#   3. writes /opt/deploypro/.env with freshly generated secrets, mode 0600
 #   4. checks that the deploy domain and its wildcard point at this server
 #   5. opens ports 80 and 443 if a ufw firewall is active
-#   6. builds and starts the stack, applies migrations, runs `forge doctor`
-#   7. installs /usr/local/bin/forge, so `forge …` works from any shell
+#   6. builds and starts the stack, applies migrations, runs `deploypro doctor`
+#   7. installs /usr/local/bin/deploypro, so `deploypro …` works from any shell
 #
 #   --env-only   stop after writing .env (to review it before starting)
 set -Eeuo pipefail
 trap 'echo "install failed on line $LINENO: $BASH_COMMAND" >&2' ERR
 
-FORGE_HOME="${FORGE_HOME:-/opt/forge}"
-FORGE_REPO="${FORGE_REPO:-https://github.com/ICOFCUCAM/deploygenus.git}"
-FORGE_BRANCH="${FORGE_BRANCH:-main}"
+DEPLOYPRO_HOME="${DEPLOYPRO_HOME:-/opt/deploypro}"
+DEPLOYPRO_REPO="${DEPLOYPRO_REPO:-https://github.com/ICOFCUCAM/deploygenus.git}"
+DEPLOYPRO_BRANCH="${DEPLOYPRO_BRANCH:-main}"
 ENV_ONLY=0
 [ "${1:-}" = "--env-only" ] && ENV_ONLY=1
 
@@ -48,7 +48,7 @@ ask() {
 }
 
 # A Fernet key is 32 random bytes, url-safe base64. Generated here rather than
-# with `forge keygen` because on a first install nothing is built yet.
+# with `deploypro keygen` because on a first install nothing is built yet.
 fernet_key() { openssl rand 32 | base64 | tr '+/' '-_' | tr -d '\n'; }
 
 public_ip() {
@@ -86,31 +86,31 @@ if [ "$ENV_ONLY" = 0 ]; then
         note "installed: $(docker --version)"
     fi
 
-    say "2/7 Forge in $FORGE_HOME"
-    if [ -d "$FORGE_HOME/.git" ]; then
-        git -C "$FORGE_HOME" fetch -q origin "$FORGE_BRANCH"
-        git -C "$FORGE_HOME" checkout -q "$FORGE_BRANCH"
-        git -C "$FORGE_HOME" merge -q --ff-only "origin/$FORGE_BRANCH"
-        note "updated to $(git -C "$FORGE_HOME" rev-parse --short HEAD)"
+    say "2/7 DeployPro in $DEPLOYPRO_HOME"
+    if [ -d "$DEPLOYPRO_HOME/.git" ]; then
+        git -C "$DEPLOYPRO_HOME" fetch -q origin "$DEPLOYPRO_BRANCH"
+        git -C "$DEPLOYPRO_HOME" checkout -q "$DEPLOYPRO_BRANCH"
+        git -C "$DEPLOYPRO_HOME" merge -q --ff-only "origin/$DEPLOYPRO_BRANCH"
+        note "updated to $(git -C "$DEPLOYPRO_HOME" rev-parse --short HEAD)"
     else
-        git clone -q --branch "$FORGE_BRANCH" "$FORGE_REPO" "$FORGE_HOME"
-        note "cloned $(git -C "$FORGE_HOME" rev-parse --short HEAD)"
+        git clone -q --branch "$DEPLOYPRO_BRANCH" "$DEPLOYPRO_REPO" "$DEPLOYPRO_HOME"
+        note "cloned $(git -C "$DEPLOYPRO_HOME" rev-parse --short HEAD)"
     fi
 fi
 
-cd "$FORGE_HOME"
+cd "$DEPLOYPRO_HOME"
 
 say "3/7 configuration"
 if [ -f .env ]; then
     note ".env exists — keeping it and its secrets"
 else
-    ask FORGE_DEPLOY_DOMAIN "Deploy domain (every deployment gets <id>.<this>)"
-    ask FORGE_ACME_EMAIL "Email for Let's Encrypt"
-    FORGE_DNS_PROVIDER="${FORGE_DNS_PROVIDER:-cloudflare}"
-    if [ "$FORGE_DNS_PROVIDER" = cloudflare ]; then
+    ask DEPLOYPRO_DEPLOY_DOMAIN "Deploy domain (every deployment gets <id>.<this>)"
+    ask DEPLOYPRO_ACME_EMAIL "Email for Let's Encrypt"
+    DEPLOYPRO_DNS_PROVIDER="${DEPLOYPRO_DNS_PROVIDER:-cloudflare}"
+    if [ "$DEPLOYPRO_DNS_PROVIDER" = cloudflare ]; then
         ask CF_DNS_API_TOKEN "Cloudflare API token (Zone > Zone > Read and Zone > DNS > Edit)"
     fi
-    FORGE_DEPLOY_DOMAIN="$(echo "$FORGE_DEPLOY_DOMAIN" | tr 'A-Z' 'a-z' | sed 's/^\*\.//; s/\.$//')"
+    DEPLOYPRO_DEPLOY_DOMAIN="$(echo "$DEPLOYPRO_DEPLOY_DOMAIN" | tr 'A-Z' 'a-z' | sed 's/^\*\.//; s/\.$//')"
     POSTGRES_PASSWORD="$(openssl rand -hex 24)"
     umask 077
     cat >.env <<EOF
@@ -118,32 +118,32 @@ else
 # what each setting does. The three secrets below were generated for this
 # server and exist nowhere else.
 
-FORGE_DEPLOY_DOMAIN=$FORGE_DEPLOY_DOMAIN
-FORGE_API_TOKEN=$(openssl rand -hex 32)
+DEPLOYPRO_DEPLOY_DOMAIN=$DEPLOYPRO_DEPLOY_DOMAIN
+DEPLOYPRO_API_TOKEN=$(openssl rand -hex 32)
 
 # Encrypts every stored environment variable. NOT included in backups.
 # Copy it into a password manager now: without it, a restored database's
 # variables cannot be decrypted.
-FORGE_MASTER_KEY=$(fernet_key)
+DEPLOYPRO_MASTER_KEY=$(fernet_key)
 
-FORGE_CERT_RESOLVER=le
-FORGE_ACME_EMAIL=$FORGE_ACME_EMAIL
-FORGE_DNS_PROVIDER=$FORGE_DNS_PROVIDER
+DEPLOYPRO_CERT_RESOLVER=le
+DEPLOYPRO_ACME_EMAIL=$DEPLOYPRO_ACME_EMAIL
+DEPLOYPRO_DNS_PROVIDER=$DEPLOYPRO_DNS_PROVIDER
 CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:-}
 
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-DATABASE_URL=postgresql://forge:$POSTGRES_PASSWORD@postgres:5432/forge
+DATABASE_URL=postgresql://deploypro:$POSTGRES_PASSWORD@postgres:5432/deploypro
 
-FORGE_NETWORK=forge
-FORGE_BUILD_ROOT=/var/lib/forge/builds
-FORGE_ROUTER_CONFIG_DIR=/var/lib/forge/router
+DEPLOYPRO_NETWORK=deploypro
+DEPLOYPRO_BUILD_ROOT=/var/lib/deploypro/builds
+DEPLOYPRO_ROUTER_CONFIG_DIR=/var/lib/deploypro/router
 ENVIRONMENT=production
 
-FORGE_ALERT_WEBHOOK_URL=${FORGE_ALERT_WEBHOOK_URL:-}
-FORGE_BACKUP_DIR=/var/backups/forge
-FORGE_BACKUP_HOST_DIR=/var/backups/forge
-FORGE_BACKUP_HOUR=3
-FORGE_BACKUP_KEEP=7
+DEPLOYPRO_ALERT_WEBHOOK_URL=${DEPLOYPRO_ALERT_WEBHOOK_URL:-}
+DEPLOYPRO_BACKUP_DIR=/var/backups/deploypro
+DEPLOYPRO_BACKUP_HOST_DIR=/var/backups/deploypro
+DEPLOYPRO_BACKUP_HOUR=3
+DEPLOYPRO_BACKUP_KEEP=7
 EOF
     umask 022
     chmod 600 .env
@@ -160,19 +160,19 @@ fi
 
 say "4/7 DNS"
 ip="$(public_ip)"
-probe="check-$(openssl rand -hex 3).$FORGE_DEPLOY_DOMAIN"
-bare="$(resolves_to "$FORGE_DEPLOY_DOMAIN")"
+probe="check-$(openssl rand -hex 3).$DEPLOYPRO_DEPLOY_DOMAIN"
+bare="$(resolves_to "$DEPLOYPRO_DEPLOY_DOMAIN")"
 wild="$(resolves_to "$probe")"
 if [ -z "$ip" ]; then
     note "could not work out this server's public IP; skipping the check"
 elif [[ " $bare " == *" $ip "* && " $wild " == *" $ip "* ]]; then
-    note "$FORGE_DEPLOY_DOMAIN and *.$FORGE_DEPLOY_DOMAIN both point here ($ip)"
+    note "$DEPLOYPRO_DEPLOY_DOMAIN and *.$DEPLOYPRO_DEPLOY_DOMAIN both point here ($ip)"
 else
     note "WARNING: DNS does not point at this server ($ip) yet:"
-    note "  $FORGE_DEPLOY_DOMAIN      -> ${bare:-nothing}"
-    note "  *.$FORGE_DEPLOY_DOMAIN    -> ${wild:-nothing}"
+    note "  $DEPLOYPRO_DEPLOY_DOMAIN      -> ${bare:-nothing}"
+    note "  *.$DEPLOYPRO_DEPLOY_DOMAIN    -> ${wild:-nothing}"
     note "Add both as A records to $ip. If your DNS is Cloudflare, set them to"
-    note "'DNS only' (grey cloud): Forge terminates TLS itself."
+    note "'DNS only' (grey cloud): DeployPro terminates TLS itself."
     note "Carrying on — certificates are requested once DNS is right."
 fi
 
@@ -184,47 +184,47 @@ else
     note "no active ufw — make sure your provider's firewall allows 80 and 443"
 fi
 
-say "6/7 starting Forge"
-mkdir -p "${FORGE_BACKUP_HOST_DIR:-/var/backups/forge}"
+say "6/7 starting DeployPro"
+mkdir -p "${DEPLOYPRO_BACKUP_HOST_DIR:-/var/backups/deploypro}"
 docker compose up -d --build --remove-orphans
 # Migrate until it works: it fails only while Postgres is still starting, and
 # it is safe to repeat. The worker restarts itself until the schema exists.
 migrated=0
 for _ in $(seq 1 60); do
-    if docker compose exec -T api forge migrate; then migrated=1 && break; fi
+    if docker compose exec -T api deploypro migrate; then migrated=1 && break; fi
     sleep 2
 done
 [ "$migrated" = 1 ] || die "migrations did not apply — 'docker compose logs api postgres'"
-docker compose exec -T api forge doctor || true
+docker compose exec -T api deploypro doctor || true
 
-say "7/7 the forge command"
-cat >/usr/local/bin/forge <<EOF
+say "7/7 the deploypro command"
+cat >/usr/local/bin/deploypro <<EOF
 #!/bin/sh
-# Installed by $FORGE_HOME/scripts/install.sh: runs the Forge CLI in the
+# Installed by $DEPLOYPRO_HOME/scripts/install.sh: runs the DeployPro CLI in the
 # control plane container, with a terminal when there is one.
-cd "$FORGE_HOME" || exit 1
-if [ -t 0 ]; then exec docker compose exec api forge "\$@"; fi
-exec docker compose exec -T api forge "\$@"
+cd "$DEPLOYPRO_HOME" || exit 1
+if [ -t 0 ]; then exec docker compose exec api deploypro "\$@"; fi
+exec docker compose exec -T api deploypro "\$@"
 EOF
-chmod 755 /usr/local/bin/forge
-note "try: forge doctor"
+chmod 755 /usr/local/bin/deploypro
+note "try: deploypro doctor"
 
 cat <<EOF
 
-$(printf '\033[32m')Forge is running.$(printf '\033[0m')
+$(printf '\033[32m')DeployPro is running.$(printf '\033[0m')
 
-  Dashboard   https://forge.$FORGE_DEPLOY_DOMAIN
-  Sign in     the FORGE_API_TOKEN in $FORGE_HOME/.env
+  Dashboard   https://deploypro.$DEPLOYPRO_DEPLOY_DOMAIN
+  Sign in     the DEPLOYPRO_API_TOKEN in $DEPLOYPRO_HOME/.env
 
   Now, before anything else:
-  1. Copy FORGE_MASTER_KEY from $FORGE_HOME/.env into a password manager.
-  2. Set FORGE_ALERT_WEBHOOK_URL in .env (Slack or Discord), then
-     'docker compose up -d' and 'forge test-alert'.
-  3. Copy /var/backups/forge off this server on a schedule (rclone, rsync).
+  1. Copy DEPLOYPRO_MASTER_KEY from $DEPLOYPRO_HOME/.env into a password manager.
+  2. Set DEPLOYPRO_ALERT_WEBHOOK_URL in .env (Slack or Discord), then
+     'docker compose up -d' and 'deploypro test-alert'.
+  3. Copy /var/backups/deploypro off this server on a schedule (rclone, rsync).
 
   First deploy:
-     forge project create --name "My app" --repo https://github.com/you/app.git
-     forge deploy my-app
+     deploypro project create --name "My app" --repo https://github.com/you/app.git
+     deploypro deploy my-app
 
   Upgrade later by running this script again.
 EOF

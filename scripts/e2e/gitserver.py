@@ -1,6 +1,6 @@
 """git smart-HTTP over TLS, for scripts/e2e/run.sh.
 
-Forge refuses file:// repositories on purpose, so the end-to-end run serves
+DeployPro refuses file:// repositories on purpose, so the end-to-end run serves
 its test repository the way a real host would: HTTPS, with a certificate the
 run trusts through GIT_SSL_CAINFO. Verification stays on.
 

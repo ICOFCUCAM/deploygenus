@@ -25,7 +25,7 @@ ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY forge ./forge
+COPY deploypro ./deploypro
 COPY db ./db
 RUN pip install --no-cache-dir .
 
@@ -34,4 +34,4 @@ RUN pip install --no-cache-dir .
 # equivalent to root on the host. Dropping to an unprivileged user here would
 # be a gesture — the user would still need to be in the docker group, which
 # grants the same thing.
-CMD ["uvicorn", "forge.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "deploypro.main:app", "--host", "0.0.0.0", "--port", "8000"]

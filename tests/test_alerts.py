@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from forge.adapters import notify
-from forge.engine import monitor as monitor_module
-from forge.engine.alerts import Alerts
-from forge.engine.monitor import Monitor
+from deploypro.adapters import notify
+from deploypro.engine import monitor as monitor_module
+from deploypro.engine.alerts import Alerts
+from deploypro.engine.monitor import Monitor
 from tests import fakes
 
 
@@ -63,12 +63,12 @@ class TestNotify:
 
     def test_the_level_is_visible_at_a_glance(self):
         assert notify.render(title="Blog is down", detail="", level="critical") == (
-            "🔴 Forge: Blog is down"
+            "🔴 DeployPro: Blog is down"
         )
 
 
 class FakeSettings:
-    network = "forge"
+    network = "deploypro"
     health_path = "/"
     disk_alert_percent = 90
     build_root = "/nonexistent"

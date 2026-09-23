@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from forge.domain.errors import Unauthorized
-from forge.routers.webhooks import _handle_push, _verify_signature
+from deploypro.domain.errors import Unauthorized
+from deploypro.routers.webhooks import _handle_push, _verify_signature
 
 SECRET = "a-project-webhook-secret"
 
@@ -59,10 +59,10 @@ class TestPushFiltering:
             calls.append(kwargs)
             return SimpleNamespace(short_id="blog-abc12345", number=7)
 
-        monkeypatch.setattr("forge.routers.webhooks.service.queue_deploy", fake_queue)
+        monkeypatch.setattr("deploypro.routers.webhooks.service.queue_deploy", fake_queue)
         # The response serialiser needs a real Deployment; what is under test
         # here is which pushes get queued, not how they are rendered.
-        monkeypatch.setattr("forge.routers.webhooks._out", lambda *a, **k: None)
+        monkeypatch.setattr("deploypro.routers.webhooks._out", lambda *a, **k: None)
         return calls
 
     @pytest.fixture

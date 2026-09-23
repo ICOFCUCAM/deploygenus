@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from forge.domain.models import (
+from deploypro.domain.models import (
     Deployment,
     DeploymentStatus,
     DeploymentTrigger,
@@ -68,7 +68,7 @@ def deployment(**kwargs) -> Deployment:
         git_message="Rewrite the pricing page",
         git_author="Ada",
         framework="next-standalone",
-        image_tag="forge/blog:4f2a9c1e0000",
+        image_tag="deploypro/blog:4f2a9c1e0000",
         internal_port=8080,
         container_id="c" * 64,
         error=None,

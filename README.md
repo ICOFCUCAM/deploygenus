@@ -1,4 +1,4 @@
-# Forge
+# DeployPro
 
 A self-hosted deployment platform. Push to a branch; a container is built,
 started, health-checked and routed, on hardware you own.
@@ -16,7 +16,7 @@ monthly number rather than a function of traffic.
 
 ## Status
 
-**Forge has been run end to end on a real Docker daemon, a real Traefik and a
+**DeployPro has been run end to end on a real Docker daemon, a real Traefik and a
 real Postgres.** `scripts/e2e/run.sh` deploys a test app from a git push, then:
 - routes a production domain
 - deploys again during a render and checks the render finishes
@@ -35,7 +35,7 @@ row. Its runs have found five bugs that would have hit real installations.
 All five are fixed.
 
 268 unit tests cover everything that does not need a daemon. What is still
-unproven, chiefly HTTPS and Forge's own container image, is listed under
+unproven, chiefly HTTPS and DeployPro's own container image, is listed under
 [What is proven and what is not](#what-is-proven-and-what-is-not).
 
 The dashboard is server-rendered from the control plane itself — no build
@@ -129,14 +129,14 @@ restart rather than a rebuild.
 **On a fresh Ubuntu or Debian server, one command does all of it:**
 
 ```bash
-git clone https://github.com/ICOFCUCAM/deploygenus.git /opt/forge && cd /opt/forge
-FORGE_DEPLOY_DOMAIN=deploys.example.com FORGE_ACME_EMAIL=you@example.com \
+git clone https://github.com/ICOFCUCAM/deploygenus.git /opt/deploypro && cd /opt/deploypro
+DEPLOYPRO_DEPLOY_DOMAIN=deploys.example.com DEPLOYPRO_ACME_EMAIL=you@example.com \
 CF_DNS_API_TOKEN=… bash scripts/install.sh
 ```
 
 It installs Docker and generates the secrets. It checks your DNS and opens the
-firewall. It starts the stack, migrates and runs `forge doctor`. It also
-installs a `forge` command on the server. Run it again to upgrade.
+firewall. It starts the stack, migrates and runs `deploypro doctor`. It also
+installs a `deploypro` command on the server. Run it again to upgrade.
 [docs/02-hetzner-cloudflare.md](docs/02-hetzner-cloudflare.md) walks through
 the whole thing on Hetzner with Cloudflare DNS, from creating the server to a
 live site.
@@ -158,24 +158,24 @@ You need a host with Docker, a domain, and a DNS provider with an API token.
 cp .env.example .env
 ```
 
-Fill in `FORGE_DEPLOY_DOMAIN`, `FORGE_ACME_EMAIL`, `FORGE_DNS_PROVIDER` and
+Fill in `DEPLOYPRO_DEPLOY_DOMAIN`, `DEPLOYPRO_ACME_EMAIL`, `DEPLOYPRO_DNS_PROVIDER` and
 its API token, then generate the three secrets:
 
 ```bash
-openssl rand -hex 32                                 # FORGE_API_TOKEN
+openssl rand -hex 32                                 # DEPLOYPRO_API_TOKEN
 openssl rand -hex 24                                 # POSTGRES_PASSWORD
-docker compose run --rm --no-deps api forge keygen   # FORGE_MASTER_KEY
+docker compose run --rm --no-deps api deploypro keygen   # DEPLOYPRO_MASTER_KEY
 ```
 
-Keep a backup of `FORGE_MASTER_KEY`. Losing it makes every stored environment
+Keep a backup of `DEPLOYPRO_MASTER_KEY`. Losing it makes every stored environment
 variable unreadable, and changing it has exactly the same effect.
 
 **3. Start, and create the schema.**
 
 ```bash
 docker compose up -d
-docker compose exec api forge migrate
-docker compose exec api forge doctor
+docker compose exec api deploypro migrate
+docker compose exec api deploypro doctor
 ```
 
 `doctor` checks the things that are actually wrong when nothing deploys: the
@@ -190,7 +190,7 @@ domain per week** would be spent by about seven deploys a day — and then
 nothing would get a certificate, including the custom domains carrying real
 traffic.
 
-So Forge issues **one wildcard certificate** for `*.deploys.example.com`, and
+So DeployPro issues **one wildcard certificate** for `*.deploys.example.com`, and
 every deployment router inherits it. A wildcard can only be proven over a
 DNS-01 challenge, which is why a DNS provider token is not optional. Customer
 domains are separate and low-volume: they get individual certificates over
@@ -199,16 +199,16 @@ HTTP-01.
 ## Your first deploy
 
 ```bash
-forge project create --name "Blog" --repo https://github.com/you/blog.git
-forge deploy blog
-forge logs blog-3f9a2c71 --follow
+deploypro project create --name "Blog" --repo https://github.com/you/blog.git
+deploypro deploy blog
+deploypro logs blog-3f9a2c71 --follow
 ```
 
 ```
 ·· deploying Blog #1 — main at 4f2a9c1e (manual)
 ·· cloning https://github.com/you/blog.git at 4f2a9c1e
 ·· Next.js with output: 'standalone' — serving the traced server bundle
-·· building image forge/blog:4f2a9c1e88b1
+·· building image deploypro/blog:4f2a9c1e88b1
    #8 [build 4/4] RUN npm run build
    …
 ·· image built
@@ -221,11 +221,11 @@ forge logs blog-3f9a2c71 --follow
 Then deploy on every push:
 
 ```bash
-forge webhook blog      # prints the payload URL and the secret
+deploypro webhook blog      # prints the payload URL and the secret
 ```
 
 The same thing is on the project page in the dashboard, at
-`https://forge.deploys.example.com` — sign in with `FORGE_API_TOKEN` and the
+`https://deploypro.deploys.example.com` — sign in with `DEPLOYPRO_API_TOKEN` and the
 browser holds a signed cookie derived from it, so there is still only one
 credential to keep.
 
@@ -236,8 +236,8 @@ URL and cannot see production-scoped variables.
 ### Environment variables
 
 ```bash
-forge env set blog DATABASE_URL 'postgres://…' --target production
-forge env set blog STRIPE_KEY - < key.txt        # `-` reads stdin, staying
+deploypro env set blog DATABASE_URL 'postgres://…' --target production
+deploypro env set blog STRIPE_KEY - < key.txt        # `-` reads stdin, staying
                                                   # out of your shell history
 ```
 
@@ -245,16 +245,16 @@ They are applied at **build** time as well as run time, so changing one takes
 effect on the next build:
 
 ```bash
-forge deploy blog
+deploypro deploy blog
 ```
 
 ### Custom domains
 
 ```bash
-forge domain add blog example.com --primary
-forge domain add blog www.example.com
+deploypro domain add blog example.com --primary
+deploypro domain add blog www.example.com
 # point DNS at deploys.example.com, then:
-forge domain verify blog example.com
+deploypro domain verify blog example.com
 ```
 
 Verification is a DNS check before the hostname reaches the router — an
@@ -270,13 +270,13 @@ running exactly the code the website is running — not a second build of the
 same commit.
 
 ```bash
-forge process add blog mailer  --type worker --command "node worker.js" --replicas 2
-forge process add blog nightly --type cron   --command "node cleanup.js" \
+deploypro process add blog mailer  --type worker --command "node worker.js" --replicas 2
+deploypro process add blog nightly --type cron   --command "node cleanup.js" \
                                --schedule "0 3 * * *"
 
-forge process list blog
-forge runs blog nightly --output      # history, and the last run's output
-forge process run blog nightly        # trigger it now, outside the schedule
+deploypro process list blog
+deploypro runs blog nightly --output      # history, and the last run's output
+deploypro process run blog nightly        # trigger it now, outside the schedule
 ```
 
 **Both run against production only.** A preview of a branch must not start a
@@ -307,9 +307,9 @@ it makes, such as recordings that a worker renders later. A volume is storage
 owned by the **project** rather than by a deployment:
 
 ```bash
-forge volume add balancevid recordings /data
-forge volume list balancevid
-forge volume rm balancevid recordings    # stops mounting it; the data is kept
+deploypro volume add balancevid recordings /data
+deploypro volume list balancevid
+deploypro volume rm balancevid recordings    # stops mounting it; the data is kept
 ```
 
 - It is mounted into the production web container, **every worker and every
@@ -320,30 +320,30 @@ forge volume rm balancevid recordings    # stops mounting it; the data is kept
   database password.
 - It takes effect from the next deploy, because Docker cannot add a mount to a
   running container.
-- The Docker volume is called `forge_<project>_<name>`, created on first use and
-  **never deleted by Forge**. Removing a volume, or the whole project, only stops
-  mounting it. `forge doctor` lists volumes nothing mounts any more; deleting one
+- The Docker volume is called `deploypro_<project>_<name>`, created on first use and
+  **never deleted by DeployPro**. Removing a volume, or the whole project, only stops
+  mounting it. `deploypro doctor` lists volumes nothing mounts any more; deleting one
   is a deliberate `docker volume rm`.
 
 **The one thing your image must do:** create the mount path and give it to the
 user the app runs as. A new volume copies the ownership of the directory it is
 mounted over. If the directory is missing, the volume is owned by root, and an
-app running as a normal user (as every image Forge generates does) cannot write
+app running as a normal user (as every image DeployPro generates does) cannot write
 to it:
 
 ```dockerfile
 RUN mkdir -p /data && chown node:node /data     # before USER node
 ```
 
-Back volumes up like a database. Forge does not snapshot them.
+Back volumes up like a database. DeployPro does not snapshot them.
 
 ### Letting work finish: the stop timeout
 
 ```bash
-forge project set balancevid --stop-timeout 1800    # seconds; default 10
+deploypro project set balancevid --stop-timeout 1800    # seconds; default 10
 ```
 
-When a deploy replaces a container, Forge does not wait for the old one to
+When a deploy replaces a container, DeployPro does not wait for the old one to
 stop. It renames the old container out of the way, sends it its stop signal,
 and starts the replacement immediately. The old container keeps running until
 it exits or until its stop timeout runs out, and then the worker removes it.
@@ -367,12 +367,12 @@ database queue claimed with `FOR UPDATE SKIP LOCKED` is.
 
 ```bash
 # .env
-FORGE_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/…   # or a Discord webhook
+DEPLOYPRO_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/…   # or a Discord webhook
 
-forge test-alert        # sends one, to prove it arrives
+deploypro test-alert        # sends one, to prove it arrives
 ```
 
-Forge sends a message when:
+DeployPro sends a message when:
 
 - **a deploy of the production branch fails.** Production is untouched, and the
   message says so. Failed previews are not sent; whoever pushed them is usually
@@ -385,7 +385,7 @@ Forge sends a message when:
 - **a scheduled job starts failing,** and again when it succeeds.
 - **a replaced worker is killed at its stop timeout,** which means the timeout
   is too short for its work.
-- **the disk passes `FORGE_DISK_ALERT_PERCENT`** (90% by default).
+- **the disk passes `DEPLOYPRO_DISK_ALERT_PERCENT`** (90% by default).
 - **a backup fails.**
 
 Each ongoing condition is sent once when it starts and once when it ends,
@@ -395,15 +395,15 @@ never once a minute.
 
 ```bash
 # .env: daily at 03:00 UTC, newest 7 kept
-FORGE_BACKUP_DIR=/var/backups/forge
+DEPLOYPRO_BACKUP_DIR=/var/backups/deploypro
 
-forge backup             # take one now
-forge doctor             # shows how old the latest one is
+deploypro backup             # take one now
+deploypro doctor             # shows how old the latest one is
 ```
 
-Each backup is a directory, `forge-<time>/`, containing:
+Each backup is a directory, `deploypro-<time>/`, containing:
 
-- `forge.dump`: the database, in `pg_restore` format.
+- `deploypro.dump`: the database, in `pg_restore` format.
 - `volumes/<volume>.tar.gz`: every project's volume.
 - `manifest.json`: the size and SHA-256 of each file.
 
@@ -411,19 +411,19 @@ A backup is written under a `.partial` name and renamed when complete, so an
 interrupted one never looks finished.
 
 **The master key is not in the backup.** Every environment variable in the
-dump is encrypted with `FORGE_MASTER_KEY`. A backup that carried the key would
+dump is encrypted with `DEPLOYPRO_MASTER_KEY`. A backup that carried the key would
 carry every secret, readable. Keep the key in a password manager. Without it
 the variables in a restored database cannot be decrypted.
 
 **Copy backups off the machine.** A backup on the disk that fails does not
-survive the failure. `rclone` or `rsync` from `FORGE_BACKUP_HOST_DIR` on a cron
+survive the failure. `rclone` or `rsync` from `DEPLOYPRO_BACKUP_HOST_DIR` on a cron
 is enough.
 
 **Restoring a volume:**
 
 ```bash
-forge restore-volume /var/backups/forge/forge-20260923T030000Z balancevid recordings
-forge deploy balancevid
+deploypro restore-volume /var/backups/deploypro/deploypro-20260923T030000Z balancevid recordings
+deploypro deploy balancevid
 ```
 
 This writes the backup's files into the volume, recreating the volume if it is
@@ -434,10 +434,10 @@ workers first if they could be writing the same files.
 
 ```bash
 docker compose stop api worker
-docker compose exec -T postgres dropdb -U forge forge
-docker compose exec -T postgres createdb -U forge forge
-docker compose exec -T postgres pg_restore -U forge -d forge --no-owner < forge.dump
-docker compose start api worker        # with the same FORGE_MASTER_KEY
+docker compose exec -T postgres dropdb -U deploypro deploypro
+docker compose exec -T postgres createdb -U deploypro deploypro
+docker compose exec -T postgres pg_restore -U deploypro -d deploypro --no-owner < deploypro.dump
+docker compose start api worker        # with the same DEPLOYPRO_MASTER_KEY
 ```
 
 The end-to-end run rehearses the disaster. It deletes a project's volume and
@@ -450,28 +450,28 @@ Every hour, between deploys, the worker:
 
 - **Removes old images.** It keeps the image of production, of any deployment
   with a running container, of anything queued or building, and of the newest
-  `FORGE_KEEP_IMAGES` ready deployments (10 by default). An older deployment
+  `DEPLOYPRO_KEEP_IMAGES` ready deployments (10 by default). An older deployment
   stays listed and can be redeployed, which rebuilds it. Rolling back to it
   directly says exactly that.
 - **Prunes build cache** that nothing has used for a week.
-- **Deletes build logs and job runs** older than `FORGE_LOG_RETENTION_DAYS`
+- **Deletes build logs and job runs** older than `DEPLOYPRO_LOG_RETENTION_DAYS`
   (30 by default). It always keeps the log of what is serving production, and
   each job's most recent run.
 
 It only touches images this installation built, identified by a
-`forge.instance` label. A second Forge on the same Docker host, such as a
+`deploypro.instance` label. A second DeployPro on the same Docker host, such as a
 staging copy or the end-to-end run, cannot clean away the first one's rollback
-targets. `forge housekeeping` runs it now.
+targets. `deploypro housekeeping` runs it now.
 
 ### Rollback
 
 ```bash
-forge deployments blog
+deploypro deployments blog
 #  * #14   ready      live  9c8b1a22 main    blog-7e1a0d93
 #    #13   ready      live  4f2a9c1e main    blog-3f9a2c71
 #    #12   failed           2b7d4f01 main    blog-11c9e2a7
 
-forge promote blog '#13'
+deploypro promote blog '#13'
 ```
 
 ## Reference
@@ -480,7 +480,7 @@ forge promote blog '#13'
 
 The dashboard owns the root path; the JSON API lives under `/api`. All of it
 except `/health`, `/ready` and `/webhooks/*` needs
-`Authorization: Bearer $FORGE_API_TOKEN` — or the dashboard's session cookie,
+`Authorization: Bearer $DEPLOYPRO_API_TOKEN` — or the dashboard's session cookie,
 which is derived from the same token so a browser needs no second credential.
 
 | | |
@@ -502,9 +502,9 @@ which is derived from the same token so a browser needs no second credential.
 | `GET /api/processes/{id}/runs` · `POST …/run` | run history, and trigger now |
 | `POST /webhooks/{slug}` | git push, HMAC-signed |
 
-### Telling Forge how to build
+### Telling DeployPro how to build
 
-Detection runs most-explicit-first: a `Dockerfile`, then a `forge.json`, then
+Detection runs most-explicit-first: a `Dockerfile`, then a `deploypro.json`, then
 project settings, then framework signatures, then a bare `index.html`.
 
 ```json
@@ -517,13 +517,13 @@ project settings, then framework signatures, then a bare `index.html`.
 }
 ```
 
-Committing a `Dockerfile` always wins, and is how you deploy a language Forge
+Committing a `Dockerfile` always wins, and is how you deploy a language DeployPro
 has no rule for. Its `EXPOSE` is read for the port.
 
-### What Forge tells your app
+### What DeployPro tells your app
 
-`PORT`, `FORGE_URL`, `FORGE_DEPLOYMENT`, `FORGE_GIT_SHA`, `FORGE_ENV`
-(`production` or `preview`). `FORGE_URL` is how a preview build discovers the
+`PORT`, `DEPLOYPRO_URL`, `DEPLOYPRO_DEPLOYMENT`, `DEPLOYPRO_GIT_SHA`, `DEPLOYPRO_ENV`
+(`production` or `preview`). `DEPLOYPRO_URL` is how a preview build discovers the
 hostname it cannot know at commit time — for canonical tags, OAuth redirects
 and `og:image`.
 
@@ -566,7 +566,7 @@ Run `./scripts/e2e/run.sh` on any host with Docker for the end-to-end run.
 - a forged webhook refused, and a signed one deployed
 
 Checked by hand: every container came back after the Docker daemon was
-restarted, and Forge found nothing to repair.
+restarted, and DeployPro found nothing to repair.
 
 **Phase 1 checks in the same run** (65 in all; the suite passed ten runs in a row):
 - alerts reach a webhook for a site that is down, and for its recovery, sent
@@ -579,7 +579,7 @@ restarted, and Forge found nothing to repair.
 - the database dump restores into an empty database
 
 **Found by the Phase 1 run, and fixed:**
-- Docker 29 reports a missing object as "no such object", in lowercase. Forge
+- Docker 29 reports a missing object as "no such object", in lowercase. DeployPro
   only recognised "No such container", so every "already gone, carry on" path
   raised instead. After containers were deleted by hand, the next deploy
   failed.
@@ -589,7 +589,7 @@ restarted, and Forge found nothing to repair.
   of 62.
 
 **Found by the first end-to-end run, and fixed:**
-- Traefik read none of Forge's route files, because they were named `.json`
+- Traefik read none of DeployPro's route files, because they were named `.json`
   and its file provider reads only `.yml`, `.yaml` and `.toml`. No production
   domain, promotion or rollback would ever have reached a real router.
 - The pinned `traefik:v3.1` cannot talk to Docker 29, so no deployment URL
@@ -619,10 +619,10 @@ of a duplicate mount path and a comma in a path.
 - HTTPS. The end-to-end run uses plain HTTP, so the wildcard certificate over
   DNS-01, per-domain certificates over HTTP-01 and the HTTP-to-HTTPS redirect
   need a real domain.
-- Forge's own image and `docker compose up`. The environment the end-to-end
+- DeployPro's own image and `docker compose up`. The environment the end-to-end
   run was developed in cannot pull from Docker Hub, so the control plane ran
   directly on the host instead of in `python:3.12-slim`.
-- The framework Dockerfiles Forge generates (Next.js, Django, Go and the rest)
+- The framework Dockerfiles DeployPro generates (Next.js, Django, Go and the rest)
   against their real base images, for the same reason. The run uses the
   repository's own `FROM scratch` Dockerfile.
 
@@ -633,7 +633,7 @@ gives the four commands).
 ## Layout
 
 ```
-forge/
+deploypro/
   domain/        pure: detection, Dockerfile generation, naming, models
   adapters/      Postgres, Docker CLI, git, Traefik files, encryption
   repositories/  queries, including the deployment queue

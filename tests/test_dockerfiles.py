@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from forge.domain.detect import detect
-from forge.domain.dockerfiles import ENV_SECRET_ID, _exec_form
+from deploypro.domain.detect import detect
+from deploypro.domain.dockerfiles import ENV_SECRET_ID, _exec_form
 
 #: One repository per generator, so the properties below cover all of them.
 FIXTURES = {
@@ -124,7 +124,7 @@ def test_pip_is_not_told_to_skip_its_cache(repo):
 
 
 def test_each_node_toolchain_caches_where_it_actually_downloads():
-    from forge.domain.dockerfiles import BUN, NPM, PNPM, YARN
+    from deploypro.domain.dockerfiles import BUN, NPM, PNPM, YARN
 
     assert {tc.name: tc.cache_dir for tc in (NPM, PNPM, YARN, BUN)} == {
         "npm": "/root/.npm",

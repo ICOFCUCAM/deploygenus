@@ -7,8 +7,8 @@ import os
 import httpx
 import pytest
 
-from forge.domain import session
-from forge.domain.models import DeploymentStatus, LogStream
+from deploypro.domain import session
+from deploypro.domain.models import DeploymentStatus, LogStream
 from tests import fakes
 
 TOKEN = "a-test-api-token"
@@ -19,14 +19,14 @@ def app():
     os.environ.update(
         {
             "DATABASE_URL": "postgresql://unused/unused",
-            "FORGE_MASTER_KEY": "unused",
-            "FORGE_API_TOKEN": TOKEN,
-            "FORGE_DEPLOY_DOMAIN": "deploys.example.com",
+            "DEPLOYPRO_MASTER_KEY": "unused",
+            "DEPLOYPRO_API_TOKEN": TOKEN,
+            "DEPLOYPRO_DEPLOY_DOMAIN": "deploys.example.com",
             "ENVIRONMENT": "development",
         }
     )
-    from forge.config import get_settings
-    from forge.main import app as application
+    from deploypro.config import get_settings
+    from deploypro.main import app as application
 
     get_settings.cache_clear()
     return application
@@ -103,28 +103,31 @@ def repos(monkeypatch):
         raise AssertionError(short_id)
 
     monkeypatch.setattr(
-        "forge.web.routes.project_repo.list_all", lambda: _async(state["projects"])
+        "deploypro.web.routes.project_repo.list_all", lambda: _async(state["projects"])
     )
-    monkeypatch.setattr("forge.web.routes.project_repo.get_by_slug", by_slug)
-    monkeypatch.setattr("forge.web.routes.project_repo.get", by_id)
+    monkeypatch.setattr("deploypro.web.routes.project_repo.get_by_slug", by_slug)
+    monkeypatch.setattr("deploypro.web.routes.project_repo.get", by_id)
     monkeypatch.setattr(
-        "forge.web.routes.project_repo.list_domains", lambda _id: _async(state["domains"])
-    )
-    monkeypatch.setattr(
-        "forge.web.routes.project_repo.list_env", lambda _id: _async(state["env"])
+        "deploypro.web.routes.project_repo.list_domains",
+        lambda _id: _async(state["domains"]),
     )
     monkeypatch.setattr(
-        "forge.web.routes.volume_repo.list_for_project",
+        "deploypro.web.routes.project_repo.list_env", lambda _id: _async(state["env"])
+    )
+    monkeypatch.setattr(
+        "deploypro.web.routes.volume_repo.list_for_project",
         lambda _id: _async(state["volumes"]),
     )
-    monkeypatch.setattr("forge.web.routes.deployment_repo.get", dep_get)
-    monkeypatch.setattr("forge.web.routes.deployment_repo.get_by_short_id", dep_by_short)
+    monkeypatch.setattr("deploypro.web.routes.deployment_repo.get", dep_get)
     monkeypatch.setattr(
-        "forge.web.routes.deployment_repo.list_for_project",
+        "deploypro.web.routes.deployment_repo.get_by_short_id", dep_by_short
+    )
+    monkeypatch.setattr(
+        "deploypro.web.routes.deployment_repo.list_for_project",
         lambda _id, limit=25: _async(state["deployments"]),
     )
     monkeypatch.setattr(
-        "forge.web.routes.deployment_repo.read_logs",
+        "deploypro.web.routes.deployment_repo.read_logs",
         lambda _id, limit=0, after=0: _async(state["logs"]),
     )
 
@@ -135,16 +138,16 @@ def repos(monkeypatch):
         raise AssertionError(name)
 
     monkeypatch.setattr(
-        "forge.web.routes.process_repo.list_for_project",
+        "deploypro.web.routes.process_repo.list_for_project",
         lambda _id: _async(state["processes"]),
     )
-    monkeypatch.setattr("forge.web.routes.process_repo.get_by_name", process_by_name)
+    monkeypatch.setattr("deploypro.web.routes.process_repo.get_by_name", process_by_name)
     monkeypatch.setattr(
-        "forge.web.routes.process_repo.list_runs",
+        "deploypro.web.routes.process_repo.list_runs",
         lambda _id, limit=25: _async(state["runs"]),
     )
     monkeypatch.setattr(
-        "forge.web.routes.process_repo.last_run", lambda _id: _async(state["runs"][0])
+        "deploypro.web.routes.process_repo.last_run", lambda _id: _async(state["runs"][0])
     )
     return state
 
@@ -157,7 +160,7 @@ async def _async(value):
 def anon(app):
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(
-        transport=transport, base_url="http://forge.test", follow_redirects=False
+        transport=transport, base_url="http://deploypro.test", follow_redirects=False
     )
 
 
@@ -167,7 +170,7 @@ async def client(app):
     cookie = session.issue(token=TOKEN)
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="http://forge.test",
+        base_url="http://deploypro.test",
         cookies={session.COOKIE_NAME: cookie},
         follow_redirects=False,
     ) as http:
@@ -209,7 +212,7 @@ class TestAccess:
         forged = session.issue(token="some-other-token")
         async with httpx.AsyncClient(
             transport=transport,
-            base_url="http://forge.test",
+            base_url="http://deploypro.test",
             cookies={session.COOKIE_NAME: forged},
             follow_redirects=False,
         ) as http:
@@ -264,7 +267,7 @@ class TestPages:
         """Build output is attacker-influenced: it contains whatever a
         dependency printed."""
         monkeypatch.setattr(
-            "forge.web.routes.deployment_repo.read_logs",
+            "deploypro.web.routes.deployment_repo.read_logs",
             lambda _id, limit=0, after=0: _async(
                 [fakes.log_line(1, "<img src=x onerror=alert(1)>")]
             ),
@@ -289,7 +292,7 @@ class TestProjectSummary:
             slug="api", name="Orders API", production_deployment_id=None
         )
         monkeypatch.setattr(
-            "forge.web.routes.project_repo.list_all", lambda: _async([undeployed])
+            "deploypro.web.routes.project_repo.list_all", lambda: _async([undeployed])
         )
         response = await client.get("/")
         assert "not deployed yet" in response.text
@@ -320,7 +323,7 @@ class TestProcesses:
     async def test_job_output_cannot_inject_markup(self, client, repos, monkeypatch):
         """A job's output is whatever the customer's own code printed."""
         monkeypatch.setattr(
-            "forge.web.routes.process_repo.list_runs",
+            "deploypro.web.routes.process_repo.list_runs",
             lambda _id, limit=25: _async(
                 [fakes.job_run(output="<img src=x onerror=alert(1)>")]
             ),
@@ -334,7 +337,7 @@ class TestProcesses:
     ):
         body = (await client.get("/projects/blog")).text
         assert "/data" in body
-        assert "forge_blog_recordings" in body
+        assert "deploypro_blog_recordings" in body
         assert "Stop timeout" in body
 
     async def test_a_worker_page_says_where_its_output_goes(self, client, repos):

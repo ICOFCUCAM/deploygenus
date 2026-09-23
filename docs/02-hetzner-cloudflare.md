@@ -1,10 +1,10 @@
-# Forge on Hetzner, with DNS on Cloudflare
+# DeployPro on Hetzner, with DNS on Cloudflare
 
 From nothing to a live site in about 30 minutes. Throughout, replace:
 
 - `example.com` with your domain (it must already be on Cloudflare)
-- `deploys.example.com` with the domain Forge will own. Every deployment gets
-  `<id>.deploys.example.com`, and the dashboard is `forge.deploys.example.com`.
+- `deploys.example.com` with the domain DeployPro will own. Every deployment gets
+  `<id>.deploys.example.com`, and the dashboard is `deploypro.deploys.example.com`.
 
 ## 1. Create the server (Hetzner Cloud)
 
@@ -23,7 +23,7 @@ In the [Hetzner Cloud console](https://console.hetzner.cloud):
 7. **Firewalls:** create one allowing inbound **TCP 22, 80, 443** (and ICMP if
    you like), and attach it. Hetzner's firewall sits in front of the server,
    so nothing else can reach it.
-8. **Backups:** optional. Forge makes its own backups every day, but Hetzner's
+8. **Backups:** optional. DeployPro makes its own backups every day, but Hetzner's
    are a second, off-disk copy of everything for 20% of the server price.
    Worth it.
 
@@ -38,7 +38,7 @@ In the Cloudflare dashboard, open your domain, then **DNS → Records**, and add
 | A | `deploys` | `203.0.113.10` | **DNS only** (grey cloud) |
 | A | `*.deploys` | `203.0.113.10` | **DNS only** (grey cloud) |
 
-**Grey cloud, not orange.** Forge gets its own certificates and terminates
+**Grey cloud, not orange.** DeployPro gets its own certificates and terminates
 HTTPS itself. Behind Cloudflare's proxy, visitors would get Cloudflare's
 certificate instead, and the free one covers `*.example.com` but not a
 second-level name like `*.deploys.example.com`, so every deployment URL would
@@ -46,7 +46,7 @@ show a certificate error.
 
 ## 3. Create a Cloudflare API token
 
-Forge proves to Let's Encrypt that it controls `*.deploys.example.com` by
+DeployPro proves to Let's Encrypt that it controls `*.deploys.example.com` by
 writing a temporary DNS record. That is the only way to get a wildcard
 certificate, and it needs a token.
 
@@ -59,7 +59,7 @@ certificate, and it needs a token.
 
 Create it and copy the token. Cloudflare shows it only once.
 
-## 4. Install Forge
+## 4. Install DeployPro
 
 SSH in and run the installer:
 
@@ -67,11 +67,11 @@ SSH in and run the installer:
 ssh root@203.0.113.10
 
 apt-get update && apt-get install -y git
-git clone https://github.com/ICOFCUCAM/deploygenus.git /opt/forge
-cd /opt/forge
+git clone https://github.com/ICOFCUCAM/deploygenus.git /opt/deploypro
+cd /opt/deploypro
 
-FORGE_DEPLOY_DOMAIN=deploys.example.com \
-FORGE_ACME_EMAIL=you@example.com \
+DEPLOYPRO_DEPLOY_DOMAIN=deploys.example.com \
+DEPLOYPRO_ACME_EMAIL=you@example.com \
 CF_DNS_API_TOKEN=paste-the-token-here \
 bash scripts/install.sh
 ```
@@ -80,23 +80,23 @@ It installs Docker and generates the secrets. It checks that both DNS records
 point at this server and starts everything. Then it prints the dashboard
 address. Nothing is asked twice: running it again later is how you upgrade.
 
-> Until the Forge changes are merged into `main`, add
-> `FORGE_BRANCH=claude/tender-archimedes-libref` to the command.
+> Until the DeployPro changes are merged into `main`, add
+> `DEPLOYPRO_BRANCH=claude/tender-archimedes-libref` to the command.
 
 ## 5. Right after it finishes
 
 1. **Save the master key.**
-   `grep FORGE_MASTER_KEY /opt/forge/.env` prints it. Put it in your password
+   `grep DEPLOYPRO_MASTER_KEY /opt/deploypro/.env` prints it. Put it in your password
    manager. Backups deliberately do not contain it, and without it a restored
    database's variables cannot be read.
-2. **Sign in.** Open `https://forge.deploys.example.com` and use the
-   `FORGE_API_TOKEN` from `/opt/forge/.env`. The first certificate can take a
+2. **Sign in.** Open `https://deploypro.deploys.example.com` and use the
+   `DEPLOYPRO_API_TOKEN` from `/opt/deploypro/.env`. The first certificate can take a
    minute to arrive; until then the browser warns about it.
 3. **Alerts.** Create a Slack or Discord incoming webhook. Set
-   `FORGE_ALERT_WEBHOOK_URL=` in `/opt/forge/.env`, then:
+   `DEPLOYPRO_ALERT_WEBHOOK_URL=` in `/opt/deploypro/.env`, then:
 
    ```bash
-   cd /opt/forge && docker compose up -d && forge test-alert
+   cd /opt/deploypro && docker compose up -d && deploypro test-alert
    ```
 
 4. **Prove the whole platform on this server** (about 3 minutes, and it
@@ -104,7 +104,7 @@ address. Nothing is asked twice: running it again later is how you upgrade.
 
    ```bash
    apt-get install -y golang-go postgresql python3-venv
-   cd /opt/forge && python3 -m venv .venv && .venv/bin/pip install -q -e '.[dev]'
+   cd /opt/deploypro && python3 -m venv .venv && .venv/bin/pip install -q -e '.[dev]'
    ./scripts/e2e/run.sh
    ```
 
@@ -114,16 +114,16 @@ address. Nothing is asked twice: running it again later is how you upgrade.
 ## 6. Deploy BalanceVid
 
 ```bash
-forge project create --name BalanceVid --repo https://github.com/you/balancevid.git
-forge volume add balancevid recordings /data
-forge process add balancevid render --type worker --command "node worker.js"
-forge project set balancevid --stop-timeout 1800 --memory 4096 --cpus 3
-forge env set balancevid DATABASE_URL '…' --target production
-forge deploy balancevid
-forge logs <the id it prints> --follow
+deploypro project create --name BalanceVid --repo https://github.com/you/balancevid.git
+deploypro volume add balancevid recordings /data
+deploypro process add balancevid render --type worker --command "node worker.js"
+deploypro project set balancevid --stop-timeout 1800 --memory 4096 --cpus 3
+deploypro env set balancevid DATABASE_URL '…' --target production
+deploypro deploy balancevid
+deploypro logs <the id it prints> --follow
 ```
 
-Then connect pushes: `forge webhook balancevid` prints the URL and secret for
+Then connect pushes: `deploypro webhook balancevid` prints the URL and secret for
 the repository's **Settings → Webhooks** on GitHub.
 
 Its Dockerfile must create `/data` and give it to the user the app runs as.
@@ -135,13 +135,13 @@ See the README, under Volumes.
 2. Then:
 
    ```bash
-   forge domain add balancevid app.example.com --primary
-   forge domain verify balancevid app.example.com
+   deploypro domain add balancevid app.example.com --primary
+   deploypro domain verify balancevid app.example.com
    ```
 
 ## 7. Copy backups off the server
 
-Daily backups land in `/var/backups/forge`, on the same disk they protect.
+Daily backups land in `/var/backups/deploypro`, on the same disk they protect.
 Copy them somewhere else. Cloudflare R2 (no egress fees) with `rclone` is a
 good fit:
 
@@ -149,7 +149,7 @@ good fit:
 apt-get install -y rclone
 rclone config            # add an "r2" remote: S3-compatible, provider Cloudflare
 crontab -e               # then add:
-30 4 * * * rclone sync /var/backups/forge r2:forge-backups --quiet
+30 4 * * * rclone sync /var/backups/deploypro r2:deploypro-backups --quiet
 ```
 
 ## When something is wrong
@@ -157,8 +157,8 @@ crontab -e               # then add:
 | Symptom | Look at |
 | --- | --- |
 | Browser warns about the certificate for more than a few minutes | `docker compose logs router \| grep -i acme`. Usually the token's permissions, or an orange-cloud record. |
-| `forge doctor` says the wildcard does not resolve | The `*.deploys` record, and that it is DNS only |
-| A deploy fails | `forge logs <id>`. The last lines are the container's own output. |
+| `deploypro doctor` says the wildcard does not resolve | The `*.deploys` record, and that it is DNS only |
+| A deploy fails | `deploypro logs <id>`. The last lines are the container's own output. |
 | Nothing reachable at all | The Hetzner firewall allows 80 and 443, and `docker compose ps` shows everything up |
 
-Upgrade Forge: `cd /opt/forge && bash scripts/install.sh`.
+Upgrade DeployPro: `cd /opt/deploypro && bash scripts/install.sh`.
