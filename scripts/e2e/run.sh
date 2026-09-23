@@ -150,6 +150,8 @@ cleanup() {
         docker images -q "deploypro/$project" | sort -u | xargs -r docker rmi -f >/dev/null 2>&1 || true
     done
     docker rm -f deploypro-e2e-router >/dev/null 2>&1 || true
+    docker rm -f deploypro-e2e-orphan deploypro-e2e-foreign >/dev/null 2>&1 || true
+    docker network rm deploypro-e2e-other >/dev/null 2>&1 || true
     docker volume ls -q --filter "label=deploypro.project=$SLUG" | xargs -r docker volume rm >/dev/null 2>&1 || true
     docker images -q "deploypro/$SLUG" | sort -u | xargs -r docker rmi -f >/dev/null 2>&1 || true
     docker network rm deploypro-e2e >/dev/null 2>&1 || true
@@ -577,5 +579,32 @@ check "uninstalling the app on GitHub is noticed" \
     test "$(sql "select count(*) from github_installations")" = 0
 check "and the project stops treating pushes as its own" \
     test -z "$(sql "select github_installation_id from projects where slug = '$GH_SLUG'")"
+
+step "deleting a project stops everything it ran"
+GH_HOST="$(gh_live_host)"
+project_containers() { docker ps -aq --filter "label=deploypro.project=$1" | wc -l; }
+check "before: the project has containers" test "$(project_containers "$GH_SLUG")" -ge 1
+check "before: its deployment answers on its own address" serves "$GH_HOST" "version="
+curl -s -b "$JAR" -o /dev/null -X POST "$DASH/projects/$GH_SLUG/delete"
+check "the project is gone from the database" \
+    test "$(sql "select count(*) from projects where slug = '$GH_SLUG'")" = 0
+check "every one of its containers was removed" test "$(project_containers "$GH_SLUG")" = 0
+wait_for 15 "its address no longer serves it" lacks "$GH_HOST" "version="
+check "the other project was not touched" serves "$DOMAIN" "version="
+
+# The backstop: a container left behind by a project that no longer exists is
+# removed by the worker; an identical one on another installation's network is
+# not, because another DeployPro on this daemon labels its containers the same.
+docker network create deploypro-e2e-other >/dev/null
+docker create --name deploypro-e2e-orphan --network "$DEPLOYPRO_NETWORK" \
+    -l deploypro.owner=deploypro -l deploypro.project=gone-project "$TRAEFIK_IMAGE" >/dev/null
+docker create --name deploypro-e2e-foreign --network deploypro-e2e-other \
+    -l deploypro.owner=deploypro -l deploypro.project=gone-project "$TRAEFIK_IMAGE" >/dev/null
+restart_worker
+wait_for 30 "the worker removes a container whose project is gone" \
+    bash -c "! docker inspect deploypro-e2e-orphan >/dev/null 2>&1"
+check "but never one on another installation's network" docker inspect deploypro-e2e-foreign
+docker rm -f deploypro-e2e-foreign >/dev/null
+docker network rm deploypro-e2e-other >/dev/null
 
 printf '\n\033[32mall %s checks passed\033[0m\n' "$PASSED"

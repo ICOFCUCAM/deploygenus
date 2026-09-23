@@ -8,9 +8,10 @@ what a deployment is.
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
-from deploypro.adapters import containers, source
+from deploypro.adapters import containers, edge, source
 from deploypro.config import Settings, get_settings
 from deploypro.domain import naming
 from deploypro.domain.errors import InvalidRequest
@@ -19,6 +20,8 @@ from deploypro.domain.repo_url import is_ssh_url
 from deploypro.engine import gitaccess
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import projects as project_repo
+
+logger = logging.getLogger("deploypro.service")
 
 
 async def queue_deploy(
@@ -125,6 +128,63 @@ async def sweep_draining() -> tuple[int, int]:
     return await containers.sweep_draining()
 
 
+async def delete_project(project: Project, settings: Settings) -> int:
+    """Delete a project and stop everything it was running. Returns how many
+    containers were removed.
+
+    Routing first, so nothing is sent to the project while it goes; then the
+    rows, so no promotion or scheduler can start anything new for it; then its
+    containers: the web deployments (which would otherwise stay reachable on
+    their own addresses), workers, draining workers and job runs. Removed, not
+    drained: deleting a project is the decision that its work stops.
+
+    Its volumes are kept, as always. DeployPro never deletes data.
+    """
+    edge.clear_route(project.slug, directory=settings.router_config_dir)
+    await project_repo.delete(project.id)
+    return await _remove_containers(
+        [
+            name
+            for name, slug in await containers.list_installation_containers(
+                settings.network
+            )
+            if slug == project.slug
+        ]
+    )
+
+
+async def remove_orphans(settings: Settings) -> int:
+    """Remove containers whose project no longer exists. Returns how many.
+
+    The backstop for `delete_project`: a deploy that was already building when
+    its project was deleted starts its container afterwards, and a removal
+    that failed halfway leaves the rest behind. Run periodically by the worker.
+
+    Containers are listed before projects on purpose. A project created in
+    between is then in the project list, so its brand new container is never
+    mistaken for an orphan; the reverse order could remove it.
+    """
+    found = await containers.list_installation_containers(settings.network)
+    existing = {project.slug for project in await project_repo.list_all()}
+    return await _remove_containers(
+        [name for name, slug in found if slug and slug not in existing]
+    )
+
+
+async def _remove_containers(names: list[str]) -> int:
+    removed = 0
+    for name in names:
+        try:
+            await containers.remove(name, force=True)
+            removed += 1
+        except containers.DockerError as exc:
+            # Already gone is the goal reached. Anything else is left for the
+            # next orphan sweep rather than failing the whole deletion.
+            if not containers.is_missing(exc):
+                logger.warning("could not remove container %s: %s", name, exc)
+    return removed
+
+
 async def reconcile(settings: Settings) -> dict[str, int]:
     """Make the database agree with the Docker daemon.
 
@@ -161,4 +221,5 @@ async def reconcile(settings: Settings) -> dict[str, int]:
         "detached": detached,
         "production_down": restored,
         "abandoned": len(abandoned),
+        "orphans": await remove_orphans(settings),
     }

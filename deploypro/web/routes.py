@@ -318,10 +318,7 @@ async def save_settings(
 async def delete_project(request: Request, slug: str, settings: SettingsDep):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
-    from deploypro.adapters import edge
-
-    edge.clear_route(project.slug, directory=settings.router_config_dir)
-    await project_repo.delete(project.id)
+    await service.delete_project(project, settings)
     return _redirect("/", ok=f"Deleted {project.name}.")
 
 

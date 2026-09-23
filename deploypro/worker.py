@@ -124,10 +124,12 @@ class Worker:
         report = await service.reconcile(self._settings)
         logger.info(
             "reconciled with docker: %s container(s) gone, %s abandoned "
-            "deployment(s) failed, %s project(s) with production down",
+            "deployment(s) failed, %s project(s) with production down, "
+            "%s container(s) of deleted projects removed",
             report["detached"],
             report["abandoned"],
             report["production_down"],
+            report["orphans"],
         )
         if report["production_down"]:
             logger.warning(
@@ -406,6 +408,13 @@ class Worker:
         # timeout is the one configured on the slowest process.
         for run in await process_repo.reclaim_abandoned_runs(older_than_seconds=7200):
             logger.warning("failed abandoned job run %s", run.id)
+        try:
+            removed = await service.remove_orphans(self._settings)
+        except Exception:  # noqa: BLE001 - a Docker hiccup must not stop deploys
+            logger.exception("could not sweep containers of deleted projects")
+        else:
+            if removed:
+                logger.info("removed %s container(s) of deleted projects", removed)
 
     async def _idle(self) -> None:
         """Sleep, but wake immediately on shutdown.

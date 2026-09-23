@@ -441,6 +441,35 @@ async def list_owned() -> list[dict[str, str]]:
     return found
 
 
+async def list_installation_containers(network: str) -> list[tuple[str, str]]:
+    """(name, project slug) of every container this installation started.
+
+    Scoped by the installation's network as well as the owner label: another
+    DeployPro on the same daemon (a staging copy, the end-to-end run) labels
+    its containers identically, and must never be mistaken for this one's.
+    Stopped and draining containers are included; both still hold a name and,
+    for a web deployment, a route.
+    """
+    out = await _capture(
+        [
+            "ps",
+            "--all",
+            "--filter",
+            f"label={OWNER_LABEL}={OWNER_VALUE}",
+            "--filter",
+            f"network={network}",
+            "--format",
+            '{{.Names}}\t{{.Label "' + PROJECT_LABEL + '"}}',
+        ]
+    )
+    found = []
+    for line in out.splitlines():
+        name, _, project = line.strip().partition("\t")
+        if name:
+            found.append((name, project.strip()))
+    return found
+
+
 async def image_exists(tag: str) -> bool:
     try:
         await _capture(["image", "inspect", tag])

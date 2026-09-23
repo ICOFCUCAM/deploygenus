@@ -35,12 +35,15 @@ real Postgres.** `scripts/e2e/run.sh` deploys a test app from a git push, then:
   repository from the list, deploys it with a token for that repository only,
   and deploys again from a signed push, against a stand-in for GitHub that
   checks the app's JWT and tokens the way GitHub does
+- deletes a project and checks every one of its containers is gone and its
+  address stops answering, and that the worker removes containers left by a
+  deleted project without touching another installation's
 
-It makes 102 checks in about four minutes. The first 79 passed ten runs in a
+It makes 110 checks in about four minutes. The first 79 passed ten runs in a
 row. Its runs have found five bugs that would have hit real installations.
 All five are fixed.
 
-345 unit tests cover everything that does not need a daemon. What is still
+366 unit tests cover everything that does not need a daemon. What is still
 unproven, chiefly HTTPS and DeployPro's own container image, is listed under
 [What is proven and what is not](#what-is-proven-and-what-is-not).
 

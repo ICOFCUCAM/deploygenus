@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Response, status
 
-from deploypro.adapters import crypto, edge
+from deploypro.adapters import crypto
 from deploypro.deps import Authenticated, ProjectDep, SettingsDep
 from deploypro.domain import naming
 from deploypro.domain.errors import InvalidRequest, NotFound
 from deploypro.domain.models import EnvTarget
 from deploypro.domain.repo_url import validate_repo_url
 from deploypro.domain.storage import normalise_mount_path, validate_volume_name
-from deploypro.engine import gitaccess, routing, verify
+from deploypro.engine import gitaccess, routing, service, verify
 from deploypro.repositories import projects as project_repo
 from deploypro.repositories import volumes as volume_repo
 from deploypro.routers.schemas import (
@@ -71,15 +71,11 @@ async def update_project(project: ProjectDep, body: UpdateProject) -> ProjectOut
 
 @router.delete("/{project_ref}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project(project: ProjectDep, settings: SettingsDep) -> Response:
-    """Remove the project, its deployments and its routing.
+    """Remove the project, its deployments, its routing and its containers.
 
-    Containers are not stopped here. They carry the project label, so the
-    worker's next reconciliation finds them without an owning row and cleans
-    them up — which keeps a slow `docker stop` out of a request that the
-    caller is waiting on.
+    Its volumes are kept. See `service.delete_project`.
     """
-    edge.clear_route(project.slug, directory=settings.router_config_dir)
-    await project_repo.delete(project.id)
+    await service.delete_project(project, settings)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
