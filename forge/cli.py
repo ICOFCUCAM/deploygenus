@@ -306,6 +306,73 @@ async def cmd_volume_rm(args: argparse.Namespace, settings: Settings) -> None:
     print(f"  to delete it for good, once nothing uses it:  docker volume rm {name}")
 
 
+async def cmd_backup(args: argparse.Namespace, settings: Settings) -> None:
+    from forge.engine import backup
+
+    dest = Path(args.dest) if args.dest else settings.backup_dir
+    if dest is None:
+        raise ForgeError("Pass --dest, or set FORGE_BACKUP_DIR")
+    dest.mkdir(parents=True, exist_ok=True)
+    keep = args.keep or settings.backup_keep
+    try:
+        result = await backup.take(settings, dest, keep=keep)
+    except backup.BackupSkipped as exc:
+        raise ForgeError(f"Not now: {exc}") from exc
+    print(f"backup written to {result.path}")
+    print("  database   forge.dump")
+    for name in result.volumes:
+        print(f"  volume     {name}")
+    print(f"  size       {result.bytes / 1e6:.1f} MB")
+    if result.removed:
+        print(f"  removed    {len(result.removed)} older backup(s), keeping {keep}")
+    print("  NOT included: FORGE_MASTER_KEY. Without it the stored variables in")
+    print("  this dump cannot be decrypted — keep a copy of it somewhere else.")
+
+
+async def cmd_restore_volume(args: argparse.Namespace, settings: Settings) -> None:
+    from forge.engine import backup
+
+    name = await backup.restore_volume(
+        Path(args.backup), project_slug=args.project, volume=args.volume
+    )
+    print(f"restored {name} from {Path(args.backup).name}")
+    print("  files in the backup were written back; nothing newer was deleted")
+
+
+async def cmd_housekeeping(args: argparse.Namespace, settings: Settings) -> None:
+    from forge.engine import housekeeping
+
+    report = await housekeeping.run(settings)
+    removed = report.get("images_removed", [])
+    print(f"images removed      {len(removed)}")
+    for tag in removed:
+        print(f"  {tag}")
+    if "build_cache" in report:
+        print(f"build cache         {report['build_cache'] or 'nothing to prune'}")
+    if "log_lines_deleted" in report:
+        print(f"log lines deleted   {report['log_lines_deleted']}")
+        print(f"job runs deleted    {report['job_runs_deleted']}")
+    for key, value in report.items():
+        if key.endswith("_error"):
+            print(f"  error ({key[:-6]}): {value}")
+
+
+async def cmd_test_alert(args: argparse.Namespace, settings: Settings) -> None:
+    from forge.adapters import notify
+
+    if not settings.alert_webhook_url:
+        raise ForgeError("FORGE_ALERT_WEBHOOK_URL is not set, so alerts go nowhere")
+    delivered = await notify.send(
+        settings.alert_webhook_url,
+        title="Test alert",
+        detail="If you can read this, Forge can reach you when something breaks.",
+        level="warning",
+    )
+    if not delivered:
+        raise ForgeError("The webhook did not accept it — see the log line above")
+    print("sent — check the channel")
+
+
 async def cmd_domain_add(args: argparse.Namespace, settings: Settings) -> None:
     project = await project_repo.resolve(args.project)
     domain = await project_repo.add_domain(project.id, args.host, primary=args.primary)
@@ -482,6 +549,7 @@ async def cmd_doctor(args: argparse.Namespace, settings: Settings) -> None:
         print(f"wildcard DNS        {settings.deploy_domain} does not resolve")
 
     await _doctor_volumes()
+    _doctor_housekeeping(settings)
 
     stuck = await deployment_repo.reclaim_abandoned(
         older_than_seconds=settings.build_timeout_seconds + 120
@@ -532,6 +600,37 @@ async def _doctor_volumes() -> None:
         print(f"draining            {len(draining)} container(s) finishing work:")
         for name in sorted(draining):
             print(f"  {name}")
+
+
+def _doctor_housekeeping(settings: Settings) -> None:
+    from datetime import UTC, datetime
+
+    from forge.engine import backup
+    from forge.engine.monitor import disk_used_percent
+
+    percent = disk_used_percent(settings.build_root)
+    if percent is not None:
+        flag = (
+            "  over the alert threshold" if percent >= settings.disk_alert_percent else ""
+        )
+        print(f"disk                {percent}% used{flag}")
+    print(
+        "alerts              "
+        + ("on" if settings.alert_webhook_url else "OFF — set FORGE_ALERT_WEBHOOK_URL")
+    )
+    if settings.backup_dir is None:
+        print("backups             OFF — set FORGE_BACKUP_DIR")
+        return
+    newest = backup.latest(settings.backup_dir)
+    if newest is None:
+        print(f"backups             none yet in {settings.backup_dir}")
+        return
+    taken = datetime.strptime(
+        newest.name.removeprefix(backup.PREFIX), "%Y%m%dT%H%M%SZ"
+    ).replace(tzinfo=UTC)
+    hours = (datetime.now(UTC) - taken).total_seconds() / 3600
+    stale = "  STALE — the daily backup has not run" if hours > 26 else ""
+    print(f"backups             last {newest.name}, {hours:.0f}h ago{stale}")
 
 
 def _writable(path: Path) -> bool:
@@ -703,6 +802,24 @@ def _parser() -> argparse.ArgumentParser:
     vol_rm.add_argument("project")
     vol_rm.add_argument("name")
     vol_rm.set_defaults(handler=cmd_volume_rm)
+
+    backup_cmd = sub.add_parser("backup", help="back up the database and every volume")
+    backup_cmd.add_argument("--dest", help="default: FORGE_BACKUP_DIR")
+    backup_cmd.add_argument("--keep", type=int, help="backups to keep; default 7")
+    backup_cmd.set_defaults(handler=cmd_backup)
+    restore = sub.add_parser(
+        "restore-volume", help="write a volume back from a backup directory"
+    )
+    restore.add_argument("backup", help="a forge-<timestamp> directory")
+    restore.add_argument("project")
+    restore.add_argument("volume")
+    restore.set_defaults(handler=cmd_restore_volume)
+    sub.add_parser(
+        "housekeeping", help="clear old images, build cache and logs now"
+    ).set_defaults(handler=cmd_housekeeping)
+    sub.add_parser("test-alert", help="send a test alert").set_defaults(
+        handler=cmd_test_alert
+    )
 
     webhook = sub.add_parser("webhook", help="print a project's webhook settings")
     webhook.add_argument("project")

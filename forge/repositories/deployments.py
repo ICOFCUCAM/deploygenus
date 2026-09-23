@@ -377,3 +377,30 @@ async def last_log_seq(deployment_id: UUID) -> int:
         )
         row = await cur.fetchone()
     return row["seq"]
+
+
+async def delete_old_logs(*, older_than_days: int) -> int:
+    """Delete build logs of deployments created more than N days ago.
+
+    The deployments themselves stay, so the history still reads correctly;
+    only the line-by-line log goes, which is nearly all of the table's size.
+    The log of whatever is serving production is always kept, however old,
+    because it is the one someone opens when production misbehaves.
+    """
+    async with db.connection() as conn:
+        cur = await conn.execute(
+            """
+            DELETE FROM deployment_logs
+             WHERE deployment_id IN (
+                   SELECT d.id FROM deployments d
+                    WHERE d.created_at < now() - make_interval(days => %s)
+                      AND d.status IN ('ready', 'failed', 'cancelled')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM projects p
+                           WHERE p.production_deployment_id = d.id
+                      )
+             )
+            """,
+            (older_than_days,),
+        )
+        return cur.rowcount

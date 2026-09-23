@@ -37,6 +37,24 @@ ENV_SECRET_ID = "env"
 ENV_SECRET_PATH = "/run/secrets/env"
 
 
+def cache_mount(target: str, name: str) -> str:
+    """A BuildKit cache that survives between builds and is in no layer.
+
+    Package managers re-download everything when the dependency layer is
+    rebuilt — which is every time a lockfile changes. A cache mount keeps the
+    downloads on the host instead, so a one-line dependency bump fetches one
+    package rather than all of them, and the image is no larger for it.
+
+    Shared by every project on the host, keyed by tool. That is the same trust
+    boundary the platform already has: one owner, one token, and every
+    project's build runs on the same daemon. Caches are content-addressed by
+    the tools that use them, and lockfile integrity hashes still apply.
+    `sharing=locked` because two package managers writing one cache at once is
+    how caches get corrupted.
+    """
+    return f"--mount=type=cache,id=forge-{name},target={target},sharing=locked"
+
+
 @dataclass(frozen=True, slots=True)
 class NodeToolchain:
     """Which package manager the repository is asking for.
@@ -50,6 +68,12 @@ class NodeToolchain:
     lockfile: str | None
     install: str
     setup: tuple[str, ...] = ()
+    #: Where this tool keeps its download cache when running as root.
+    cache_dir: str = "/root/.npm"
+
+    @property
+    def cache(self) -> str:
+        return cache_mount(self.cache_dir, self.name)
 
     @property
     def run_prefix(self) -> str:
@@ -63,30 +87,34 @@ PNPM = NodeToolchain(
     "pnpm-lock.yaml",
     "pnpm install --frozen-lockfile",
     setup=("corepack enable pnpm",),
+    cache_dir="/root/.local/share/pnpm/store",
 )
 YARN = NodeToolchain(
     "yarn",
     "yarn.lock",
     "yarn install --frozen-lockfile",
     setup=("corepack enable yarn",),
+    cache_dir="/usr/local/share/.cache/yarn",
 )
 BUN = NodeToolchain(
     "bun",
     "bun.lockb",
     "bun install --frozen-lockfile",
     setup=("npm install -g bun@1",),
+    cache_dir="/root/.bun/install/cache",
 )
 
 
-def build_env_mount(command: str) -> str:
+def build_env_mount(command: str, *, mounts: tuple[str, ...] = ()) -> str:
     """Wrap a build command so the project's variables are set while it runs.
 
     The file may legitimately be absent — a project with no variables at all —
     so its absence is not an error. `set -a` exports everything the file
     defines without each line needing its own `export`.
     """
+    extra = "".join(f"{mount} \\\n    " for mount in mounts)
     return (
-        f"RUN --mount=type=secret,id={ENV_SECRET_ID} \\\n"
+        f"RUN {extra}--mount=type=secret,id={ENV_SECRET_ID} \\\n"
         f"    set -a; [ -f {ENV_SECRET_PATH} ] && . {ENV_SECRET_PATH}; set +a; \\\n"
         f"    {command}"
     )
@@ -118,7 +146,7 @@ def _install_stage(tc: NodeToolchain, *, stage: str = "deps") -> list[str]:
         manifests += f" {tc.lockfile}"
     lines += [
         f"COPY {manifests} ./",
-        f"RUN {tc.install}",
+        f"RUN {tc.cache} {tc.install}",
         "",
     ]
     return lines
@@ -305,7 +333,7 @@ def node_server(
             "yarn": "yarn install --production --ignore-scripts --prefer-offline",
             "bun": "bun install --production",
         }[tc.name]
-        lines.append(f"RUN {prune_cmd} || true")
+        lines.append(f"RUN {tc.cache} {prune_cmd} || true")
     lines += [
         "",
         f"FROM {NODE_IMAGE} AS run",
@@ -344,11 +372,14 @@ def python_server(
     lines += [
         f"FROM {PYTHON_IMAGE} AS build",
         "WORKDIR /app",
-        "ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1",
+        # No PIP_NO_CACHE_DIR: the cache is a mount, so it is kept between
+        # builds and still never reaches the image. /root/.cache covers pip,
+        # uv and poetry alike.
+        "ENV PIP_DISABLE_PIP_VERSION_CHECK=1",
         "RUN python -m venv /opt/venv",
         'ENV PATH="/opt/venv/bin:$PATH"',
         "COPY . .",
-        f"RUN {install}",
+        f"RUN {cache_mount('/root/.cache', 'python')} {install}",
         "",
         f"FROM {PYTHON_IMAGE} AS run",
         "WORKDIR /app",
@@ -382,10 +413,16 @@ def go_server(*, port: int = DEFAULT_PORT, notes: tuple[str, ...] = ()) -> Build
         f"FROM {GO_IMAGE} AS build",
         "WORKDIR /src",
         "COPY go.mod go.su[m] ./",
-        "RUN go mod download",
+        f"RUN {cache_mount('/go/pkg/mod', 'go-mod')} go mod download",
         "COPY . .",
         "ENV CGO_ENABLED=0 GOOS=linux",
-        build_env_mount("go build -trimpath -ldflags='-s -w' -o /out/server ./..."),
+        build_env_mount(
+            "go build -trimpath -ldflags='-s -w' -o /out/server ./...",
+            mounts=(
+                cache_mount("/go/pkg/mod", "go-mod"),
+                cache_mount("/root/.cache/go-build", "go-build"),
+            ),
+        ),
         "",
         "FROM gcr.io/distroless/base-debian12 AS run",
         "COPY --from=build /out/server /server",

@@ -25,11 +25,16 @@ real Postgres.** `scripts/e2e/run.sh` deploys a test app from a git push, then:
 - runs a cron job against the shared volume
 - checks a stop timeout is enforced
 - deploys from a signed webhook
+- sends alerts for a site down, a worker stopped and a failed deploy, and
+  for each recovery
+- cleans up old images without touching production
+- restores a deleted volume from a backup, and restores the database dump
 
-It makes 39 checks in under two minutes. The first run found three bugs that
-would have stopped every real installation. All three are fixed.
+It makes 65 checks in about two and a half minutes, and passed ten runs in a
+row. Its runs have found five bugs that would have hit real installations.
+All five are fixed.
 
-217 unit tests cover everything that does not need a daemon. What is still
+268 unit tests cover everything that does not need a daemon. What is still
 unproven, chiefly HTTPS and Forge's own container image, is listed under
 [What is proven and what is not](#what-is-proven-and-what-is-not).
 
@@ -55,6 +60,10 @@ at the same time.
 | **Scheduled jobs** | Five-field cron in UTC, with run history, captured output and catch-up after downtime |
 | **Persistent volumes** | Storage that survives every deploy, shared by production, its workers and its jobs |
 | **Graceful replacement** | A replaced container gets a per-project stop timeout to finish its work, without holding up the deploy |
+| **Alerts** | Slack or Discord, once when something breaks and once when it recovers: failed deploys, sites down, workers stopped, failing jobs, a full disk |
+| **Daily backups** | The database and every volume, rotated, checksummed, and tested by restoring them |
+| **Cleans up after itself** | Old images, build cache and logs are cleared hourly, so the disk does not fill |
+| **Fast rebuilds** | Package downloads are cached between builds (npm, pnpm, yarn, bun, pip, Go) |
 
 ## How it works
 
@@ -337,6 +346,106 @@ exit". A queue consumer should do that anyway. Old and new workers overlap
 while this happens, so the queue must be safe to consume from twice. A
 database queue claimed with `FOR UPDATE SKIP LOCKED` is.
 
+### Alerts
+
+```bash
+# .env
+FORGE_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/…   # or a Discord webhook
+
+forge test-alert        # sends one, to prove it arrives
+```
+
+Forge sends a message when:
+
+- **a deploy of the production branch fails.** Production is untouched, and the
+  message says so. Failed previews are not sent; whoever pushed them is usually
+  watching.
+- **a production site stops answering HTTP.** It is checked every minute and
+  reported after two failures in a row, so a restart in progress is not an
+  outage. You get one message when it goes down and one when it comes back.
+- **a worker stops,** because a render worker that dies is invisible from the
+  website.
+- **a scheduled job starts failing,** and again when it succeeds.
+- **a replaced worker is killed at its stop timeout,** which means the timeout
+  is too short for its work.
+- **the disk passes `FORGE_DISK_ALERT_PERCENT`** (90% by default).
+- **a backup fails.**
+
+Each ongoing condition is sent once when it starts and once when it ends,
+never once a minute.
+
+### Backups
+
+```bash
+# .env: daily at 03:00 UTC, newest 7 kept
+FORGE_BACKUP_DIR=/var/backups/forge
+
+forge backup             # take one now
+forge doctor             # shows how old the latest one is
+```
+
+Each backup is a directory, `forge-<time>/`, containing:
+
+- `forge.dump`: the database, in `pg_restore` format.
+- `volumes/<volume>.tar.gz`: every project's volume.
+- `manifest.json`: the size and SHA-256 of each file.
+
+A backup is written under a `.partial` name and renamed when complete, so an
+interrupted one never looks finished.
+
+**The master key is not in the backup.** Every environment variable in the
+dump is encrypted with `FORGE_MASTER_KEY`. A backup that carried the key would
+carry every secret, readable. Keep the key in a password manager. Without it
+the variables in a restored database cannot be decrypted.
+
+**Copy backups off the machine.** A backup on the disk that fails does not
+survive the failure. `rclone` or `rsync` from `FORGE_BACKUP_HOST_DIR` on a cron
+is enough.
+
+**Restoring a volume:**
+
+```bash
+forge restore-volume /var/backups/forge/forge-20260923T030000Z balancevid recordings
+forge deploy balancevid
+```
+
+This writes the backup's files into the volume, recreating the volume if it is
+gone. Files that exist only in the live volume are kept. Stop the project's
+workers first if they could be writing the same files.
+
+**Restoring the database**, onto a new host or after losing the old one:
+
+```bash
+docker compose stop api worker
+docker compose exec -T postgres dropdb -U forge forge
+docker compose exec -T postgres createdb -U forge forge
+docker compose exec -T postgres pg_restore -U forge -d forge --no-owner < forge.dump
+docker compose start api worker        # with the same FORGE_MASTER_KEY
+```
+
+The end-to-end run rehearses the disaster. It deletes a project's volume and
+every container, restores the volume, redeploys, and checks the recordings are
+back and still writable. It also restores the dump into an empty database.
+
+### Cleaning up
+
+Every hour, between deploys, the worker:
+
+- **Removes old images.** It keeps the image of production, of any deployment
+  with a running container, of anything queued or building, and of the newest
+  `FORGE_KEEP_IMAGES` ready deployments (10 by default). An older deployment
+  stays listed and can be redeployed, which rebuilds it. Rolling back to it
+  directly says exactly that.
+- **Prunes build cache** that nothing has used for a week.
+- **Deletes build logs and job runs** older than `FORGE_LOG_RETENTION_DAYS`
+  (30 by default). It always keeps the log of what is serving production, and
+  each job's most recent run.
+
+It only touches images this installation built, identified by a
+`forge.instance` label. A second Forge on the same Docker host, such as a
+staging copy or the end-to-end run, cannot clean away the first one's rollback
+targets. `forge housekeeping` runs it now.
+
 ### Rollback
 
 ```bash
@@ -424,7 +533,7 @@ and `og:image`.
 Run `./scripts/check.sh` for ruff, the import contracts and the unit suite.
 Run `./scripts/e2e/run.sh` on any host with Docker for the end-to-end run.
 
-**Run end to end** (`scripts/e2e/run.sh`, 39 checks, Docker 29.3, Traefik
+**Run end to end** (`scripts/e2e/run.sh`, Docker 29.3, Traefik
 3.7.13, Postgres 16):
 - a git push, cloned over HTTPS
 - a build from the repository's own Dockerfile, the start, and the health check
@@ -441,6 +550,26 @@ Run `./scripts/e2e/run.sh` on any host with Docker for the end-to-end run.
 
 Checked by hand: every container came back after the Docker daemon was
 restarted, and Forge found nothing to repair.
+
+**Phase 1 checks in the same run** (65 in all; the suite passed ten runs in a row):
+- alerts reach a webhook for a site that is down, and for its recovery, sent
+  once rather than on every check
+- a stopped worker, a failed production deploy and a worker killed at its
+  timeout are all reported
+- cleanup cut 8 images to 3, and production kept its image and kept serving
+- a backup survived deleting the volume and every container: restored,
+  redeployed, and the files came back still writable
+- the database dump restores into an empty database
+
+**Found by the Phase 1 run, and fixed:**
+- Docker 29 reports a missing object as "no such object", in lowercase. Forge
+  only recognised "No such container", so every "already gone, carry on" path
+  raised instead. After containers were deleted by hand, the next deploy
+  failed.
+- A release that crashes on start was restarted by Docker's restart policy,
+  which kept it looking "running", so the deploy waited out its full health
+  timeout. It now notices the restarts and fails in about 2 seconds instead
+  of 62.
 
 **Found by the first end-to-end run, and fixed:**
 - Traefik read none of Forge's route files, because they were named `.json`
@@ -480,8 +609,9 @@ of a duplicate mount path and a comma in a path.
   against their real base images, for the same reason. The run uses the
   repository's own `FROM scratch` Dockerfile.
 
-**Not built:** image garbage collection; job and log retention; metrics;
-multi-node scheduling; alerting when a scheduled job starts failing.
+**Not built:** metrics and graphs; multi-node scheduling; off-site backup
+copies (use rclone or rsync); restoring the database from the CLI (the README
+gives the four commands).
 
 ## Layout
 

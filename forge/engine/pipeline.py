@@ -218,5 +218,10 @@ async def _build(
         secret_env_file=secret_file,
         log=log.sink(LogStream.BUILD),
         timeout=settings.build_timeout_seconds,
+        labels={
+            containers.OWNER_LABEL: containers.OWNER_VALUE,
+            containers.INSTANCE_LABEL: settings.network,
+            containers.PROJECT_LABEL: project.slug,
+        },
     )
     await log.system("image built")

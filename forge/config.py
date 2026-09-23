@@ -97,6 +97,36 @@ class Settings:
     pool_min_size: int
     pool_max_size: int
 
+    # -- housekeeping -------------------------------------------------------
+    # Everything below is optional, with a default that is safe to run with.
+
+    #: Where alerts go: a Slack or Discord incoming-webhook URL, or anything
+    #: that accepts a JSON POST. Empty sends nothing.
+    alert_webhook_url: str = ""
+
+    #: Images kept per project besides production's and the warm ones: the
+    #: rollback targets that restart in seconds. Older deployments stay listed
+    #: and can be redeployed, which rebuilds them.
+    keep_images: int = 10
+
+    #: Build logs and job runs older than this are deleted, except the build
+    #: log of whatever is serving production.
+    log_retention_days: int = 30
+
+    #: Alert when the disk holding the build root is fuller than this.
+    disk_alert_percent: int = 90
+
+    #: Seconds between checks of every production site and worker. A site is
+    #: reported down after two failed checks in a row.
+    monitor_interval_seconds: int = 60
+
+    #: Where the daily backup is written. Empty turns scheduled backups off;
+    #: `forge backup --dest` still works by hand.
+    backup_dir: Path | None = None
+    #: The hour (UTC) the daily backup runs at, and how many are kept.
+    backup_hour: int = 3
+    backup_keep: int = 7
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
@@ -147,4 +177,16 @@ def get_settings() -> Settings:
         environment=environment,
         pool_min_size=_int("FORGE_POOL_MIN", 1),
         pool_max_size=_int("FORGE_POOL_MAX", 8),
+        alert_webhook_url=_optional("FORGE_ALERT_WEBHOOK_URL", ""),
+        keep_images=max(_int("FORGE_KEEP_IMAGES", 10), 0),
+        log_retention_days=max(_int("FORGE_LOG_RETENTION_DAYS", 30), 1),
+        disk_alert_percent=min(max(_int("FORGE_DISK_ALERT_PERCENT", 90), 1), 100),
+        monitor_interval_seconds=max(_int("FORGE_MONITOR_INTERVAL", 60), 1),
+        backup_dir=(
+            Path(os.environ["FORGE_BACKUP_DIR"])
+            if os.environ.get("FORGE_BACKUP_DIR")
+            else None
+        ),
+        backup_hour=_int("FORGE_BACKUP_HOUR", 3) % 24,
+        backup_keep=max(_int("FORGE_BACKUP_KEEP", 7), 1),
     )

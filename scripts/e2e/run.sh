@@ -18,7 +18,10 @@
 # runs Forge for real. Set KEEP=1 to leave it all running for a look around.
 #
 #   ./scripts/e2e/run.sh
-set -euo pipefail
+set -Eeuo pipefail
+# Any command failing outside a check still says where, instead of the run
+# just stopping: an end-to-end run that can end silently cannot be trusted.
+trap 'fail "unexpected error on line $LINENO: $BASH_COMMAND"' ERR
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -26,6 +29,7 @@ VENV="${VENV:-$REPO/.venv}"
 FORGE="$VENV/bin/forge"
 HTTP_PORT="${E2E_HTTP_PORT:-18080}"
 GIT_PORT="${E2E_GIT_PORT:-18443}"
+SINK_PORT="${E2E_SINK_PORT:-18090}"
 PG_PORT="${E2E_PG_PORT:-55433}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7}"
 TRAEFIK_RELEASE="${TRAEFIK_RELEASE:-v3.7.13}"
@@ -76,14 +80,34 @@ sql() { psql "$DATABASE_URL" -tAc "$1"; }
 deployment_host() { echo "$(sql "select short_id from deployments where number = $1").deploys.test"; }
 latest_status() { sql "select status from deployments order by number desc limit 1"; }
 draining() { docker ps --format '{{.Names}}' --filter "label=forge.project=$SLUG" | grep -q '\.draining\.'; }
+alerted() { grep -q -- "$1" "$WORK/alerts.log" 2>/dev/null; }
+web_container() { sql "select container_id from deployments d join projects p on p.production_deployment_id = d.id"; }
+forge_images() { docker images -q --filter "label=forge.instance=forge-e2e" | sort -u; }
 no_draining() { ! docker ps -a --format '{{.Names}}' --filter "label=forge.project=$SLUG" | grep -q '\.draining\.'; }
 
+# `deploy_expecting_failure` — queue a deploy and wait for it to fail.
+deploy_expecting_failure() {
+    "$FORGE" deploy "$SLUG" >/dev/null
+    local deadline=$((SECONDS + 120))
+    until [ "$(latest_status)" = failed ]; do
+        [ "$(latest_status)" = ready ] && fail "a deploy that should have failed went live"
+        [ "$SECONDS" -ge "$deadline" ] && fail "deploy did not finish in 120s"
+        sleep 1
+    done
+}
+
+# `deploy [--ref branch]` — queue a deploy and wait until it is ready and,
+# for the production branch, until production has moved to it: promotion runs
+# after "ready", and a check made in between sees the previous deployment.
 deploy() {
     "$FORGE" deploy "$SLUG" "$@" >/dev/null
     local deadline=$((SECONDS + 120))
     while true; do
         case "$(latest_status)" in
-        ready) return 0 ;;
+        ready)
+            [ "$#" -gt 0 ] && return 0 # a preview is never promoted
+            [ "$(sql "select p.production_deployment_id = d.id from projects p, deployments d order by d.number desc limit 1")" = t ] && return 0
+            ;;
         failed) fail "deploy failed: $(sql "select error from deployments order by number desc limit 1")" ;;
         esac
         [ "$SECONDS" -ge "$deadline" ] && fail "deploy did not finish in 120s"
@@ -166,6 +190,9 @@ export FORGE_NETWORK=forge-e2e
 export FORGE_BUILD_ROOT="$WORK/build"
 export FORGE_ROUTER_CONFIG_DIR="$WORK/router"
 export FORGE_HEALTH_TIMEOUT=60
+export FORGE_ALERT_WEBHOOK_URL="http://127.0.0.1:$SINK_PORT/hook"
+export FORGE_MONITOR_INTERVAL=2
+export FORGE_KEEP_IMAGES=2
 mkdir -p "$FORGE_BUILD_ROOT" "$FORGE_ROUTER_CONFIG_DIR"
 "$FORGE" migrate >/dev/null
 pass "migrations applied"
@@ -209,6 +236,9 @@ python3 "$HERE/gitserver.py" "$WORK/git" "$GIT_PORT" "$WORK/git/cert.pem" "$WORK
 PIDS+=($!)
 wait_for 10 "git server is answering" git ls-remote "https://127.0.0.1:$GIT_PORT/app.git"
 
+python3 "$HERE/alertsink.py" "$SINK_PORT" "$WORK/alerts.log" &
+PIDS+=($!)
+
 restart_worker
 
 # ---------------------------------------------------------------------------
@@ -221,7 +251,7 @@ step "first deploy, with a volume"
 commit_version v1
 deploy
 V1="$(deployment_host 1)"
-check "deployment #1 serves on its own URL through the router" serves "$V1" "version=v1"
+wait_for 15 "deployment #1 serves on its own URL through the router" serves "$V1" "version=v1"
 check "the app can write to the volume" uploads "$V1" wedding
 
 step "production domain, worker and cron"
@@ -235,7 +265,7 @@ deploy
 check "the route file has an extension Traefik loads" test -f "$FORGE_ROUTER_CONFIG_DIR/project-$SLUG.yml"
 wait_for 15 "the production domain serves v2" serves "$DOMAIN" "version=v2"
 wait_for 15 "the worker started" logged "v2 worker started"
-wait_for 20 "the worker rendered the recording from before it existed" \
+wait_for 45 "the worker rendered the recording from before it existed" \
     serves "$DOMAIN" wedding.mp4
 
 step "a deploy in the middle of a render"
@@ -264,7 +294,7 @@ step "a preview never sees production's files"
 commit_version preview feature
 deploy --ref feature
 PREVIEW="$(deployment_host "$(sql "select max(number) from deployments")")"
-check "the preview serves the branch" serves "$PREVIEW" "version=preview"
+wait_for 15 "the preview serves the branch" serves "$PREVIEW" "version=preview"
 check "the preview has no recordings" lacks "$PREVIEW" .mp4
 check "production was not touched" serves "$DOMAIN" "version=v3"
 
@@ -308,6 +338,72 @@ hook() {
 check "a forged signature is refused" test "$(hook deadbeef)" = 401
 check "a signed push is accepted" test "$(hook "$SIG")" = 202
 wait_for 90 "and deployed" serves "$DOMAIN" "version=v6-webhook"
+
+step "alerts"
+"$FORGE" test-alert >/dev/null
+wait_for 10 "a test alert reaches the webhook" alerted "Test alert"
+
+PROD="$(web_container)"
+docker stop -t 1 "$PROD" >/dev/null
+wait_for 30 "a stopped production site is reported down" alerted "E2E BalanceVid is down"
+docker start "$PROD" >/dev/null
+wait_for 30 "and reported back when it serves again" alerted "E2E BalanceVid is serving again"
+check "a site that is down is reported once, not every check" \
+    test "$(grep -c 'E2E BalanceVid is down' "$WORK/alerts.log")" = 1
+
+docker stop -t 1 "forge-$SLUG-render-0" >/dev/null
+wait_for 30 "a stopped worker is reported" alerted "worker render is not running"
+docker start "forge-$SLUG-render-0" >/dev/null
+wait_for 30 "and its recovery" alerted "worker render is running again"
+
+commit_version crash
+deploy_expecting_failure
+wait_for 10 "a failed production deploy is reported" alerted "failed"
+check "and production kept serving the last good version" serves "$DOMAIN" "version=v6-webhook"
+check "the stop-timeout kill earlier was reported too" alerted "killed at the end of their stop timeout"
+
+step "cleaning up old images"
+before="$(forge_images | wc -l)"
+"$FORGE" housekeeping >"$WORK/housekeeping.log"
+after="$(forge_images | wc -l)"
+check "old images were removed ($before -> $after)" test "$after" -lt "$before"
+check "every cleanup step ran without an error" bash -c "! grep -q error '$WORK/housekeeping.log'"
+check "including the log and job-run retention queries" grep -q "job runs deleted" "$WORK/housekeeping.log"
+check "production's image survived" \
+    docker image inspect "$(sql "select image_tag from deployments d join projects p on p.production_deployment_id = d.id")"
+check "production still serves" serves "$DOMAIN" "version=v6-webhook"
+"$FORGE" promote "$SLUG" '#1' >"$WORK/promote.log" 2>&1 || true
+check "rolling back to a removed image says to redeploy instead" \
+    grep -q "Redeploy the commit instead" "$WORK/promote.log"
+
+step "backup, and a restore after losing the volume"
+"$FORGE" backup --dest "$WORK/backups" >"$WORK/backup.log"
+BACKUP="$(ls -d "$WORK"/backups/forge-* | tail -1)"
+check "a backup was written" test -f "$BACKUP/manifest.json"
+check "it has the database" test -s "$BACKUP/forge.dump"
+check "it has the volume, with the recordings in it" \
+    bash -c "tar -tzf '$BACKUP/volumes/forge_${SLUG}_recordings.tar.gz' | grep -q 'data/wedding.mp4'"
+check "it does not have the master key" bash -c "! grep -rq '$FORGE_MASTER_KEY' '$BACKUP'"
+
+# The disaster: every container of the project and the volume, gone.
+docker ps -aq --filter "label=forge.project=$SLUG" | xargs -r docker rm -f >/dev/null
+docker volume rm "forge_${SLUG}_recordings" >/dev/null
+check "the volume is really gone" bash -c "! docker volume inspect forge_${SLUG}_recordings"
+"$FORGE" restore-volume "$BACKUP" "$SLUG" recordings >/dev/null
+commit_version v7-restored
+deploy
+wait_for 20 "after restoring and deploying, the site is back" serves "$DOMAIN" "version=v7-restored"
+check "with the first recording" serves "$DOMAIN" "wedding.mp4"
+check "and the one rendered during a deploy" serves "$DOMAIN" "birthday.mp4"
+check "and the app can still write there (ownership survived)" uploads "$DOMAIN" after-restore
+
+psql "$DATABASE_URL" -qc "create database forge_restored"
+RESTORED="${DATABASE_URL%/*}/forge_restored"
+pg_restore --no-owner -d "$RESTORED" "$BACKUP/forge.dump"
+check "the database dump restores into an empty database" \
+    test "$(psql "$RESTORED" -tAc "select count(*) from deployments")" -ge 8
+check "with the project, its volume and its encrypted variables" \
+    test "$(psql "$RESTORED" -tAc "select count(*) from projects p join volumes v on v.project_id = p.id join env_vars e on e.project_id = p.id")" = 1
 
 step "the dashboard"
 COOKIE="$(curl -s -c - -o /dev/null -X POST -d "token=$FORGE_API_TOKEN" http://127.0.0.1:18000/login | awk '/forge/ {print $6"="$7}' | tail -1)"

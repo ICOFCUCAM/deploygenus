@@ -28,6 +28,11 @@ func logf(format string, args ...any) {
 }
 
 func web() {
+	if version == "crash" {
+		// A release that dies on start, for the failed-deploy alert.
+		fmt.Println("boom: missing configuration")
+		os.Exit(1)
+	}
 	port := os.Getenv("PORT")
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		entries, _ := os.ReadDir("/data")

@@ -323,3 +323,69 @@ It serves its test repository over HTTPS with a throwaway certificate, rather
 than weakening Forge's refusal of `file://` URLs for its own convenience. A
 test that relaxes a safety check is not testing the thing that ships.
 
+## Alerts fire once and resolve once
+
+A monitor that checks every minute and alerts on every failed check sends
+sixty messages an hour for one outage. Within a day the channel is muted, and
+the next outage goes unseen. So every ongoing condition has a key (a site, a
+worker, the disk, a job), fires when it starts, resolves when it ends, and
+sends nothing in between. One-off events, such as a failed deploy or a render
+killed at its deadline, are sent as they happen.
+
+A site or worker must fail two checks in a row. One failure is usually a
+restart or a promotion in progress, and an alert that fires on every deploy
+gets muted too. The disk resolves only 5 points below its threshold, so a disk
+sitting on the line does not flap.
+
+The state is in memory. A worker restarted mid-outage alerts once more, which
+is the right way round to be wrong.
+
+The message goes out as both `text` and `content`, because Slack reads one and
+Discord the other. One setting then works for either, and Forge never needs to
+know which it is talking to.
+
+## Backups carry the data and never the key
+
+Everything else on a host can be rebuilt: images from git, containers from
+images, route files from the database. The database and the volumes cannot, so
+a backup is exactly those.
+
+The master key stays out on purpose. Environment variables are encrypted in
+the database so that a leaked dump is not a leaked set of credentials. A backup
+that carried its own key would undo that, for every copy of every backup,
+wherever they end up.
+
+Volumes are exported with `docker cp` from a container that is created but
+never started. The image only has to exist, so a `FROM scratch` image with no
+shell and no `tar` works as well as any, and none of the app's code runs
+during a backup.
+
+`pg_dump` has to be at least as new as the server. The control plane image
+carries no Postgres client, so by default the dump runs in the same
+`postgres:16-alpine` image the database runs, which matches by construction.
+
+A Postgres advisory lock makes one backup at a time, however many workers
+notice the backup hour together.
+
+## An image belongs to the installation that built it
+
+The image sweep deletes images of projects that no longer exist. The first
+version identified Forge images by name alone (`forge/*`). Running the
+end-to-end suite, with its own database, on a host that also ran a manual test
+showed the danger: to the suite's database, every other installation's images
+belong to deleted projects.
+
+Every build is now labelled `forge.instance=<network>`, and the sweep lists
+only its own. The network name is already unique per installation on a host.
+An image without the label, built earlier or by hand, is never swept.
+Unknown means not ours to delete.
+
+## "Running" is not "alive"
+
+Under `--restart unless-stopped`, a release that exits on start is restarted at
+once and reads as running between crashes. The health check waited for it to
+answer, until the timeout, and a missing environment variable cost a
+minute-and-a-half failed deploy. The check now also reads Docker's restart
+count. Any restart during the health check means it crashed, and the deploy
+fails in seconds with the container's output in the log.
+

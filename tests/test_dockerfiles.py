@@ -61,7 +61,10 @@ def test_no_secret_is_ever_baked_into_a_layer(plan):
     gone after the RUN that used it. ARG would put every one of them in
     `docker history`."""
     assert "ARG " not in plan.dockerfile
-    if "RUN --mount" in plan.dockerfile:
+    # Any step that runs the project's own build gets the variables, and gets
+    # them from the secret mount. (Cache mounts are also `RUN --mount`, which
+    # is why this looks for the build commands rather than for `--mount`.)
+    if any(cmd in plan.dockerfile for cmd in (" run build", " run b", "go build")):
         assert f"type=secret,id={ENV_SECRET_ID}" in plan.dockerfile
 
 
@@ -92,6 +95,43 @@ def test_dependencies_install_before_the_source_is_copied(repo):
     deps_stage = dockerfile.split("AS build", 1)[0]
     assert "COPY package.json" in deps_stage
     assert "COPY . ." not in deps_stage
+
+
+def test_dependency_downloads_are_cached_between_builds(plan):
+    """Every generator that installs packages does it with a cache mount, so a
+    changed lockfile re-downloads what changed rather than everything."""
+    build = plan.dockerfile.split("AS run", 1)[0]
+    installs = [
+        line
+        for line in build.splitlines()
+        if line.startswith("RUN")
+        and any(tool in line for tool in ("npm ci", "npm install", "pip", "go mod"))
+    ]
+    for line in installs:
+        assert "type=cache" in line, line
+
+
+def test_no_cache_reaches_the_runtime_stage(plan):
+    """A cache mount in the runtime stage would mean the runtime stage runs a
+    package manager, which is exactly what multi-stage builds exist to avoid."""
+    runtime = plan.dockerfile.split("AS run", 1)[1]
+    assert "type=cache" not in runtime
+
+
+def test_pip_is_not_told_to_skip_its_cache(repo):
+    """PIP_NO_CACHE_DIR would make the cache mount pointless."""
+    assert "PIP_NO_CACHE_DIR" not in detect(repo(FIXTURES["python"])).dockerfile
+
+
+def test_each_node_toolchain_caches_where_it_actually_downloads():
+    from forge.domain.dockerfiles import BUN, NPM, PNPM, YARN
+
+    assert {tc.name: tc.cache_dir for tc in (NPM, PNPM, YARN, BUN)} == {
+        "npm": "/root/.npm",
+        "pnpm": "/root/.local/share/pnpm/store",
+        "yarn": "/usr/local/share/.cache/yarn",
+        "bun": "/root/.bun/install/cache",
+    }
 
 
 class TestExecForm:

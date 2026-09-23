@@ -133,6 +133,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - router-config:/var/lib/forge/router
       - build-cache:/var/lib/forge/builds
+      # A directory on the host, not a named volume: backups are the one thing
+      # here that should be easy to find, copy off the machine and read without
+      # Docker. Same path in both, so `forge backup` output means the same
+      # thing inside and outside the container.
+      - ${FORGE_BACKUP_HOST_DIR:-/var/backups/forge}:${FORGE_BACKUP_DIR:-/var/backups/forge}
     networks:
       - forge
 

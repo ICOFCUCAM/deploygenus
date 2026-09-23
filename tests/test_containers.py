@@ -222,3 +222,53 @@ async def test_a_preview_never_mounts_the_projects_volumes(monkeypatch):
 
     monkeypatch.setattr(storage.volume_repo, "list_for_project", boom)
     assert await storage.mounts_for(fakes.project(), target=EnvTarget.PREVIEW) == ()
+
+
+class TestImages:
+    async def test_the_sweep_lists_only_this_installations_images(self, docker):
+        docker.responses["images"] = "forge/bv:abc\n"
+        assert await containers.list_forge_images("forge") == ["forge/bv:abc"]
+        args = docker.called("images")[0]
+        assert "label=forge.instance=forge" in args
+
+    async def test_a_build_is_labelled_with_its_installation(self, monkeypatch, tmp_path):
+        seen = {}
+
+        async def stream(args, *, log, timeout, buildkit):
+            seen["args"] = args
+
+        monkeypatch.setattr(containers, "_stream", stream)
+
+        async def log(_line):
+            pass
+
+        await containers.build(
+            context=tmp_path,
+            dockerfile=tmp_path / "Dockerfile",
+            tag="forge/bv:abc",
+            secret_env_file=None,
+            log=log,
+            timeout=60,
+            labels={"forge.instance": "forge"},
+        )
+        args = seen["args"]
+        assert args[args.index("--label") + 1] == "forge.instance=forge"
+        assert args[-1] == str(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Error response from daemon: No such container: abc",
+        "error: no such object: 5b9451403a7f",
+        "Error: No such volume: forge_bv_recordings",
+    ],
+)
+def test_every_spelling_of_already_gone_is_recognised(message):
+    assert containers.is_missing(containers.DockerError(message))
+
+
+async def test_draining_a_container_deleted_by_hand_is_not_an_error(docker):
+    """What the end-to-end run's disaster drill hit on Docker 29."""
+    docker.failures["inspect"] = "error: no such object: 5b9451403a7f"
+    await containers.drain("5b9451403a7f", grace=10, now=0)

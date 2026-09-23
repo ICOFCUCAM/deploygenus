@@ -301,3 +301,23 @@ async def list_runs(process_id: UUID, *, limit: int = 25) -> list[JobRun]:
 async def last_run(process_id: UUID) -> JobRun | None:
     runs = await list_runs(process_id, limit=1)
     return runs[0] if runs else None
+
+
+async def delete_old_runs(*, older_than_days: int) -> int:
+    """Delete finished job runs older than N days, keeping each process's most
+    recent run so "last ran" never goes blank on a job that runs rarely."""
+    async with db.connection() as conn:
+        cur = await conn.execute(
+            """
+            DELETE FROM job_runs
+             WHERE scheduled_for < now() - make_interval(days => %s)
+               AND status NOT IN ('pending', 'running')
+               AND id NOT IN (
+                   SELECT DISTINCT ON (process_id) id
+                     FROM job_runs
+                    ORDER BY process_id, scheduled_for DESC
+               )
+            """,
+            (older_than_days,),
+        )
+        return cur.rowcount

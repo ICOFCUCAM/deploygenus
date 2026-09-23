@@ -90,6 +90,23 @@ async def wait_until_healthy(
                     attempts=attempts,
                     elapsed_seconds=time.monotonic() - started,
                 )
+            # Running is not the same as alive: under `--restart unless-stopped`
+            # an app that exits on start is restarted at once and reads as
+            # running between crashes. Without this, a release that dies on a
+            # missing variable waits out the whole health timeout before
+            # failing, when the answer was known in the first second.
+            restarts = await containers.restart_count(container_id)
+            if restarts:
+                return HealthResult(
+                    healthy=False,
+                    detail=(
+                        f"the container crashed on start and was restarted "
+                        f"{restarts} time{'' if restarts == 1 else 's'} — its output "
+                        "below says why"
+                    ),
+                    attempts=attempts,
+                    elapsed_seconds=time.monotonic() - started,
+                )
 
             await asyncio.sleep(min(interval, max(0.0, deadline - time.monotonic())))
             interval = min(interval * BACKOFF, MAX_INTERVAL)
@@ -102,3 +119,24 @@ async def wait_until_healthy(
         attempts=attempts,
         elapsed_seconds=time.monotonic() - started,
     )
+
+
+async def probe(*, container_id: str, network: str, port: int, path: str) -> str | None:
+    """One request, for the production monitor. None if it answered, else why.
+
+    Same rule as the deploy check — any HTTP response counts — asked once
+    instead of until a deadline. A production site that returns 500 is up in
+    the sense the platform can vouch for; one that does not answer at all is
+    down in the sense its owner needs to hear about.
+    """
+    if not await containers.is_running(container_id):
+        return "its container is not running"
+    address = await containers.container_ip(container_id, network)
+    if address is None:
+        return f"its container is not on the {network!r} network"
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            await client.get(f"http://{address}:{port}{path}")
+    except httpx.HTTPError as exc:
+        return f"it did not answer HTTP: {type(exc).__name__}"
+    return None

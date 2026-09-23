@@ -32,10 +32,28 @@ OWNER_LABEL = "forge.owner"
 OWNER_VALUE = "forge"
 DEPLOYMENT_LABEL = "forge.deployment"
 PROJECT_LABEL = "forge.project"
+#: Which Forge installation built an image — its network name, which is
+#: already unique per installation on a host. The image sweep deletes only its
+#: own installation's images, so a second installation on the same daemon (a
+#: staging copy, the end-to-end run) can never sweep away the first one's
+#: rollback targets as "images of a project that no longer exists".
+INSTANCE_LABEL = "forge.instance"
 
 
 class DockerError(RuntimeError):
     """A docker command exited non-zero. The output is in the message."""
+
+
+def is_missing(exc: Exception) -> bool:
+    """Whether Docker's error means "no such container / object / volume".
+
+    Case-insensitively, because Docker is not consistent about it: 29.x says
+    "Error response from daemon: No such container" from `rm` and
+    "error: no such object" from `inspect`. Matching one spelling made every
+    "already gone, carry on" path raise instead — found when the end-to-end
+    run deleted a project's containers by hand and the next deploy failed.
+    """
+    return "no such" in str(exc).lower()
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +90,7 @@ async def build(
     secret_env_file: Path | None,
     log: LogSink,
     timeout: int,
+    labels: dict[str, str] | None = None,
 ) -> None:
     """Build an image, streaming every line to `log` as it happens.
 
@@ -94,6 +113,8 @@ async def build(
     ]
     if secret_env_file is not None:
         args += ["--secret", f"id=env,src={secret_env_file}"]
+    for key, value in (labels or {}).items():
+        args += ["--label", f"{key}={value}"]
     args.append(str(context))
 
     await _stream(args, log=log, timeout=timeout, buildkit=True)
@@ -189,7 +210,7 @@ async def stop(container_id: str, *, timeout: int = 10) -> None:
             ["stop", "--time", str(timeout), container_id], timeout=timeout + 60
         )
     except DockerError as exc:
-        if "No such container" not in str(exc):
+        if not is_missing(exc):
             raise
 
 
@@ -198,7 +219,7 @@ async def remove(container_id: str, *, force: bool = True) -> None:
     try:
         await _capture(args)
     except DockerError as exc:
-        if "No such container" not in str(exc):
+        if not is_missing(exc):
             raise
 
 
@@ -210,6 +231,28 @@ async def remove_by_name(name: str) -> None:
     name conflict and looks like a build problem.
     """
     await remove(name, force=True)
+
+
+async def state(name_or_id: str) -> str | None:
+    """Docker's status word — running, restarting, exited… — or None if there
+    is no such container."""
+    try:
+        out = await _capture(["inspect", "--format", "{{.State.Status}}", name_or_id])
+    except DockerError:
+        return None
+    return out.strip() or None
+
+
+async def restart_count(container_id: str) -> int:
+    """How many times the restart policy has restarted this container."""
+    try:
+        out = await _capture(["inspect", "--format", "{{.RestartCount}}", container_id])
+    except DockerError:
+        return 0
+    try:
+        return int(out.strip())
+    except ValueError:
+        return 0
 
 
 async def is_running(container_id: str) -> bool:
@@ -314,7 +357,7 @@ async def drain(name_or_id: str, *, grace: int, now: float | None = None) -> Non
     try:
         info = json.loads(await _capture(["inspect", "--format", template, name_or_id]))
     except DockerError as exc:
-        if "No such" in str(exc):
+        if is_missing(exc):
             return
         raise
     # By id from here on: the name is about to change, and the old one may
@@ -336,7 +379,7 @@ async def drain(name_or_id: str, *, grace: int, now: float | None = None) -> Non
         await _capture(["kill", "--signal", signal, container_id])
     except DockerError as exc:
         # Exited between the inspect and the signal: nothing left to ask.
-        if "is not running" not in str(exc) and "No such" not in str(exc):
+        if "is not running" not in str(exc) and not is_missing(exc):
             raise
         await remove(container_id, force=True)
 
@@ -403,11 +446,121 @@ async def image_exists(tag: str) -> bool:
     return True
 
 
-async def prune_image(tag: str) -> None:
-    # An image still referenced by a container is not an error worth raising:
-    # it means something is still using it, which is correct.
-    with contextlib.suppress(DockerError):
+async def list_forge_images(instance: str) -> list[str]:
+    """This installation's `forge/<project>:<tag>` images, as `repo:tag`.
+
+    Images without the instance label — built before it existed, or by hand —
+    are not listed, and so are never swept: unknown means not ours to delete.
+    """
+    out = await _capture(
+        [
+            "images",
+            "--filter",
+            "reference=forge/*",
+            "--filter",
+            f"label={INSTANCE_LABEL}={instance}",
+            "--format",
+            "{{.Repository}}:{{.Tag}}",
+        ]
+    )
+    return sorted({line.strip() for line in out.splitlines() if ":" in line.strip()})
+
+
+async def prune_build_cache(*, older_than_hours: int) -> str:
+    """Drop BuildKit cache nobody has used for a while.
+
+    This is the layer cache and the package-manager caches together. Both
+    regrow on the next build that needs them; neither is worth a full disk.
+    """
+    out = await _capture(
+        [
+            "builder",
+            "prune",
+            "--force",
+            "--filter",
+            f"until={older_than_hours}h",
+        ],
+        timeout=600,
+    )
+    lines = [line for line in out.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
+async def export_volume(volume: str, image: str, dest: Path) -> None:
+    """Write a volume's contents to `dest` as a tar stream (top directory
+    `data/`).
+
+    Through a container that is created and never started: `docker cp` reads
+    a container's volumes whether or not it runs, so the image only has to
+    exist — a `FROM scratch` image with no shell and no tar serves as well as
+    any. Nothing about the app runs during a backup.
+    """
+    helper = await _capture(
+        ["create", "--mount", f"type=volume,src={volume},dst=/data", image]
+    )
+    helper = helper.strip().splitlines()[-1]
+    try:
+        with dest.open("wb") as out:
+            proc = await asyncio.create_subprocess_exec(
+                "docker",
+                "cp",
+                f"{helper}:/data",
+                "-",
+                stdout=out,
+                stderr=asyncio.subprocess.PIPE,
+                env=_env(buildkit=False),
+            )
+            _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise DockerError(
+                f"docker cp of volume {volume} failed: "
+                f"{stderr.decode(errors='replace').strip()}"
+            )
+    finally:
+        await remove(helper, force=True)
+
+
+async def import_volume(volume: str, image: str, source: Path) -> None:
+    """Replace nothing, add everything: unpack a tar written by
+    `export_volume` into a volume. Existing files with the same names are
+    overwritten; others are left alone."""
+    helper = await _capture(
+        ["create", "--mount", f"type=volume,src={volume},dst=/data", image]
+    )
+    helper = helper.strip().splitlines()[-1]
+    try:
+        with source.open("rb") as tar:
+            proc = await asyncio.create_subprocess_exec(
+                "docker",
+                "cp",
+                "-",
+                f"{helper}:/",
+                stdin=tar,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=_env(buildkit=False),
+            )
+            _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise DockerError(
+                f"docker cp into volume {volume} failed: "
+                f"{stderr.decode(errors='replace').strip()}"
+            )
+    finally:
+        await remove(helper, force=True)
+
+
+async def prune_image(tag: str) -> bool:
+    """Remove an image. False if Docker refused.
+
+    An image still referenced by a container is not an error worth raising:
+    it means something is still using it, which is correct.
+    """
+    try:
         await _capture(["image", "rm", tag])
+    except DockerError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
