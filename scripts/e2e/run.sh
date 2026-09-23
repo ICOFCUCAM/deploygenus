@@ -30,6 +30,7 @@ DEPLOYPRO="$VENV/bin/deploypro"
 HTTP_PORT="${E2E_HTTP_PORT:-18080}"
 GIT_PORT="${E2E_GIT_PORT:-18443}"
 SINK_PORT="${E2E_SINK_PORT:-18090}"
+SSH_PORT="${E2E_SSH_PORT:-18022}"
 PG_PORT="${E2E_PG_PORT:-55433}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7}"
 TRAEFIK_RELEASE="${TRAEFIK_RELEASE:-v3.7.13}"
@@ -405,6 +406,79 @@ check "the database dump restores into an empty database" \
     test "$(psql "$RESTORED" -tAc "select count(*) from deployments")" -ge 8
 check "with the project, its volume and its encrypted variables" \
     test "$(psql "$RESTORED" -tAc "select count(*) from projects p join volumes v on v.project_id = p.id join env_vars e on e.project_id = p.id")" = 1
+
+step "a private repository, over SSH with a deploy key"
+if ! command -v sshd >/dev/null || ! command -v git-shell >/dev/null; then
+    printf '  skip  sshd or git-shell not installed (apt-get install openssh-server)\n'
+else
+    # A stand-in for GitHub: sshd on localhost, accepting only keys listed in
+    # its own authorized_keys, and only for git (git-shell), never a shell.
+    mkdir -p "$WORK/sshd" /run/sshd
+    ssh-keygen -q -t ed25519 -N '' -f "$WORK/sshd/host_key"
+    : >"$WORK/sshd/authorized_keys"
+    cat >"$WORK/sshd/config" <<SSHD
+Port $SSH_PORT
+ListenAddress 127.0.0.1
+HostKey $WORK/sshd/host_key
+AuthorizedKeysFile $WORK/sshd/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+StrictModes no
+UsePAM no
+PidFile $WORK/sshd/pid
+SSHD
+    start_sshd() {
+        "$(command -v sshd)" -f "$WORK/sshd/config" -D -e 2>>"$WORK/sshd/log" &
+        SSHD_PID=$!
+        PIDS+=("$SSHD_PID")
+    }
+    start_sshd
+    wait_for 10 "a local SSH git server is up" \
+        bash -c "echo >/dev/tcp/127.0.0.1/$SSH_PORT"
+    SSH_URL="ssh://$(id -un)@127.0.0.1:$SSH_PORT$WORK/git/app.git"
+    sql "update projects set repo_url = '$SSH_URL' where slug = '$SLUG'" >/dev/null
+    commit_version v8-private
+
+    check "without a deploy key, the repository refuses DeployPro" \
+        bash -c "! '$DEPLOYPRO' deploy '$SLUG' >'$WORK/nokey.log' 2>&1"
+    check "and says why" grep -q "Permission denied" "$WORK/nokey.log"
+
+    "$DEPLOYPRO" project key "$SLUG" >"$WORK/key.log"
+    PUBLIC="$(grep '^ssh-ed25519 ' "$WORK/key.log")"
+    check "deploypro project key prints a public key" test -n "$PUBLIC"
+    check "and never the private one" bash -c "! grep -q 'PRIVATE KEY' '$WORK/key.log'"
+    # Restricted as GitHub restricts a deploy key: git only, nothing else.
+    printf '%s %s\n' \
+        'command="git-shell -c \"$SSH_ORIGINAL_COMMAND\"",no-port-forwarding,no-pty,no-agent-forwarding' \
+        "$PUBLIC" >"$WORK/sshd/authorized_keys"
+
+    deploy
+    wait_for 15 "with the key added, the private repository deploys" \
+        serves "$DOMAIN" "version=v8-private"
+    check "the deploy log says it used the deploy key" \
+        test "$(sql "select count(*) from deployment_logs where line like '%with its deploy key%'")" -ge 1
+    check "no log line anywhere contains a private key" \
+        test "$(sql "select count(*) from deployment_logs where line like '%PRIVATE KEY%'")" = 0
+    check "no decrypted key is left on disk" \
+        test "$(ls "$DEPLOYPRO_BUILD_ROOT/ssh")" = known_hosts
+    # Looked up with ssh-keygen -F, not grep: ssh may store the host name
+    # hashed (HashKnownHosts, the Debian and Ubuntu default).
+    check "the git server's identity was remembered" \
+        ssh-keygen -F "[127.0.0.1]:$SSH_PORT" -f "$DEPLOYPRO_BUILD_ROOT/ssh/known_hosts"
+
+    # The server's identity changes: what an impostor would look like.
+    kill "$SSHD_PID" && wait "$SSHD_PID" 2>/dev/null || true
+    rm -f "$WORK/sshd/host_key" "$WORK/sshd/host_key.pub"
+    ssh-keygen -q -t ed25519 -N '' -f "$WORK/sshd/host_key"
+    start_sshd
+    wait_for 10 "the server is back with a different identity" \
+        bash -c "echo >/dev/tcp/127.0.0.1/$SSH_PORT"
+    check "a server whose identity changed is refused" \
+        bash -c "! '$DEPLOYPRO' deploy '$SLUG' >'$WORK/impostor.log' 2>&1"
+    check "with ssh's host key warning" grep -qi "host key" "$WORK/impostor.log"
+    check "and production was not touched" serves "$DOMAIN" "version=v8-private"
+fi
 
 step "the dashboard"
 COOKIE="$(curl -s -c - -o /dev/null -X POST -d "token=$DEPLOYPRO_API_TOKEN" http://127.0.0.1:18000/login | awk '/deploypro/ {print $6"="$7}' | tail -1)"

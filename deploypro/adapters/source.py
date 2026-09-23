@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deploypro.domain.errors import InvalidRequest
-from deploypro.domain.repo_url import validate_repo_url
+from deploypro.domain.repo_url import redact, validate_repo_url
 
 LogSink = Callable[[str], Awaitable[None]]
 
@@ -42,6 +42,7 @@ async def fetch(
     *,
     sha: str | None = None,
     log: LogSink | None = None,
+    env: dict[str, str] | None = None,
 ) -> Commit:
     """Clone `repo_url` at `ref` into `dest` and report what was fetched.
 
@@ -65,6 +66,7 @@ async def fetch(
         repo_url,
         str(dest),
         log=log,
+        env=env,
     )
 
     if sha:
@@ -72,9 +74,9 @@ async def fetch(
         # it is fetched on its own. Servers that refuse this (uploadpack
         # .allowReachableSHA1InWant off) make the deepen the fallback.
         try:
-            await _git("fetch", "--depth", "1", "origin", sha, cwd=dest, log=log)
+            await _git("fetch", "--depth", "1", "origin", sha, cwd=dest, log=log, env=env)
         except RuntimeError:
-            await _git("fetch", "--unshallow", "origin", cwd=dest, log=log)
+            await _git("fetch", "--unshallow", "origin", cwd=dest, log=log, env=env)
         await _git("checkout", "--detach", sha, cwd=dest, log=log)
 
     resolved = await _capture("rev-parse", "HEAD", cwd=dest)
@@ -89,7 +91,9 @@ async def fetch(
     return Commit(sha=resolved, ref=ref, message=message, author=author)
 
 
-async def resolve_head(repo_url: str, ref: str) -> str:
+async def resolve_head(
+    repo_url: str, ref: str, *, env: dict[str, str] | None = None
+) -> str:
     """The sha at the tip of `ref`, without cloning anything.
 
     Used when a deploy is requested by branch: the deployment row records the
@@ -97,25 +101,30 @@ async def resolve_head(repo_url: str, ref: str) -> str:
     leaves which commit to the imagination.
     """
     validate_repo_url(repo_url)
-    out = await _capture("ls-remote", "--heads", repo_url, ref)
+    out = await _capture("ls-remote", "--heads", repo_url, ref, env=env)
     if not out:
-        raise InvalidRequest(f"Branch {ref!r} does not exist in {repo_url}")
+        raise InvalidRequest(f"Branch {ref!r} does not exist in {redact(repo_url)}")
     return out.split()[0]
 
 
-async def _git(*args: str, cwd: Path | None = None, log: LogSink | None = None) -> None:
+async def _git(
+    *args: str,
+    cwd: Path | None = None,
+    log: LogSink | None = None,
+    env: dict[str, str] | None = None,
+) -> None:
     proc = await asyncio.create_subprocess_exec(
         "git",
         *args,
         cwd=str(cwd) if cwd else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        env=_env(),
+        env=_env(env),
     )
     assert proc.stdout is not None
     lines: list[str] = []
     async for raw in proc.stdout:
-        line = raw.decode(errors="replace").rstrip()
+        line = redact(raw.decode(errors="replace").rstrip())
         lines.append(line)
         if log and line:
             await log(line)
@@ -129,25 +138,27 @@ async def _git(*args: str, cwd: Path | None = None, log: LogSink | None = None) 
         raise RuntimeError(f"git {args[0]} failed ({proc.returncode}):\n{tail}")
 
 
-async def _capture(*args: str, cwd: Path | None = None) -> str:
+async def _capture(
+    *args: str, cwd: Path | None = None, env: dict[str, str] | None = None
+) -> str:
     proc = await asyncio.create_subprocess_exec(
         "git",
         *args,
         cwd=str(cwd) if cwd else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env=_env(),
+        env=_env(env),
     )
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=CLONE_TIMEOUT)
     if proc.returncode != 0:
         raise RuntimeError(
             f"git {args[0]} failed ({proc.returncode}): "
-            f"{stderr.decode(errors='replace').strip()}"
+            f"{redact(stderr.decode(errors='replace').strip())}"
         )
     return stdout.decode(errors="replace").strip()
 
 
-def _env() -> dict[str, str]:
+def _env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Git, told never to ask a human anything.
 
     A clone that prompts for a password in a worker process hangs until the
@@ -160,4 +171,5 @@ def _env() -> dict[str, str]:
     env.setdefault(
         "GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
     )
+    env.update(extra or {})
     return env

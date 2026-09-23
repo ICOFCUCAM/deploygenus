@@ -29,12 +29,14 @@ real Postgres.** `scripts/e2e/run.sh` deploys a test app from a git push, then:
   for each recovery
 - cleans up old images without touching production
 - restores a deleted volume from a backup, and restores the database dump
+- deploys a private repository over SSH with its deploy key, and refuses a git
+  server whose identity has changed
 
-It makes 65 checks in about two and a half minutes, and passed ten runs in a
+It makes 79 checks in about three minutes, and passed ten runs in a
 row. Its runs have found five bugs that would have hit real installations.
 All five are fixed.
 
-268 unit tests cover everything that does not need a daemon. What is still
+293 unit tests cover everything that does not need a daemon. What is still
 unproven, chiefly HTTPS and DeployPro's own container image, is listed under
 [What is proven and what is not](#what-is-proven-and-what-is-not).
 
@@ -232,6 +234,38 @@ credential to keep.
 Paste both into the repository's **Settings → Webhooks**. Pushes to the
 production branch deploy and promote; pushes to any other branch get a preview
 URL and cannot see production-scoped variables.
+
+### Private repositories
+
+Use the repository's SSH URL and a **deploy key**, a key DeployPro makes for
+that one project:
+
+```bash
+deploypro project create --name BalanceVid --repo git@github.com:you/balancevid.git
+deploypro project key balancevid      # prints the public key
+```
+
+On GitHub, open the repository, then **Settings → Deploy keys → Add deploy
+key**. Paste the key and leave **Allow write access off**. The project page in
+the dashboard shows the same key, with a button to make or replace it.
+
+- **It reads one repository, and nothing else.** If it leaked, it could not
+  push, and it could not reach your other repositories. It never expires and
+  is not tied to your GitHub account.
+- **The private half is encrypted** with the master key, like your variables.
+  For each git command it is decrypted into a private (0600) file, and deleted
+  when the command ends, whether it succeeds or fails. It is never in a log,
+  on a command line or in the dashboard.
+- **GitHub's server keys are pinned.** A clone from github.com fails rather
+  than trusting anyone claiming to be GitHub. Other git hosts are trusted on
+  first contact and remembered, so a key that changes later is refused.
+- **Tokens in URLs are refused.** `https://TOKEN@github.com/…` would be stored
+  in plain text and printed in every deploy log, so DeployPro rejects it and
+  points at the deploy key. Any credential that still turns up in git's own
+  output is blanked out before it is logged.
+
+`deploypro project key balancevid --rotate` replaces the key. The old one
+stops working at once, so swap it on GitHub before the next deploy.
 
 ### Environment variables
 
@@ -568,7 +602,14 @@ Run `./scripts/e2e/run.sh` on any host with Docker for the end-to-end run.
 Checked by hand: every container came back after the Docker daemon was
 restarted, and DeployPro found nothing to repair.
 
-**Phase 1 checks in the same run** (65 in all; the suite passed ten runs in a row):
+**Private repositories, in the same run:**
+- without its deploy key, the SSH git server refuses DeployPro, and the error
+  says to add the key
+- with the key, the private repository deploys
+- no log line holds a private key, and no decrypted key is left on disk
+- a server whose identity changed is refused, and production is untouched
+
+**Phase 1 checks in the same run** (the suite passed ten runs in a row):
 - alerts reach a webhook for a site that is down, and for its recovery, sent
   once rather than on every check
 - a stopped worker, a failed production deploy and a worker killed at its

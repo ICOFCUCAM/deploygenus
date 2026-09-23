@@ -32,7 +32,7 @@ from deploypro.domain.models import (
     ProcessType,
     Project,
 )
-from deploypro.domain.repo_url import validate_repo_url
+from deploypro.domain.repo_url import is_ssh_url, validate_repo_url
 from deploypro.domain.schedule import InvalidSchedule, describe, parse
 from deploypro.domain.storage import (
     docker_volume_name,
@@ -199,6 +199,7 @@ async def project_page(
                 for volume in await volume_repo.list_for_project(project.id)
             ],
             "deploy_domain": settings.deploy_domain,
+            "repo_is_ssh": is_ssh_url(project.repo_url),
             "webhook_url": (
                 f"{settings.scheme}://deploypro.{settings.deploy_domain}"
                 f"/webhooks/{project.slug}"
@@ -218,6 +219,26 @@ async def trigger_deploy(request: Request, slug: str):
     except DeployProError as exc:
         return _redirect(f"/projects/{slug}", err=exc.message)
     return _redirect(f"/deployments/{deployment.short_id}")
+
+
+@router.post("/projects/{slug}/deploy-key")
+async def make_deploy_key(
+    request: Request,
+    slug: str,
+    settings: SettingsDep,
+    rotate: Annotated[str, Form()] = "",
+):
+    signed_in(request)
+    project = await project_repo.get_by_slug(slug)
+    from deploypro.engine import gitaccess
+
+    await gitaccess.ensure_key(project, settings, rotate=bool(rotate))
+    message = (
+        "New deploy key made — replace the old one on GitHub."
+        if rotate
+        else ("Deploy key made — add it to the repository on GitHub.")
+    )
+    return _redirect(f"/projects/{slug}", ok=message)
 
 
 @router.post("/projects/{slug}/settings")

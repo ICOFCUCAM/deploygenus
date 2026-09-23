@@ -114,7 +114,8 @@ address. Nothing is asked twice: running it again later is how you upgrade.
 ## 6. Deploy BalanceVid
 
 ```bash
-deploypro project create --name BalanceVid --repo https://github.com/you/balancevid.git
+deploypro project create --name BalanceVid --repo git@github.com:you/balancevid.git
+deploypro project key balancevid     # add what it prints on GitHub (see below)
 deploypro volume add balancevid recordings /data
 deploypro process add balancevid render --type worker --command "node worker.js"
 deploypro project set balancevid --stop-timeout 1800 --memory 4096 --cpus 3
@@ -122,6 +123,11 @@ deploypro env set balancevid DATABASE_URL '…' --target production
 deploypro deploy balancevid
 deploypro logs <the id it prints> --follow
 ```
+
+**The deploy key** lets DeployPro read a private repository and nothing else. On
+GitHub, open the repository, then **Settings → Deploy keys → Add deploy key**.
+Paste the line `deploypro project key` printed, and leave **Allow write
+access** off.
 
 Then connect pushes: `deploypro webhook balancevid` prints the URL and secret for
 the repository's **Settings → Webhooks** on GitHub.
@@ -138,6 +144,25 @@ See the README, under Volumes.
    deploypro domain add balancevid app.example.com --primary
    deploypro domain verify balancevid app.example.com
    ```
+
+## When you make DeployPro's own repository private
+
+The installer upgrades by pulling from GitHub, so once the repository is
+private the server needs read access too. Give it a deploy key of its own:
+
+```bash
+ssh-keygen -t ed25519 -N '' -f /root/.ssh/deploypro_repo -C "deploypro server"
+cat /root/.ssh/deploypro_repo.pub     # add as a read-only deploy key on the repo
+cat >>/root/.ssh/config <<'EOF'
+Host github.com
+  IdentityFile /root/.ssh/deploypro_repo
+  IdentitiesOnly yes
+EOF
+cd /opt/deploypro && git remote set-url origin git@github.com:ICOFCUCAM/deploygenus.git
+git fetch      # answers "yes" once to trust GitHub, then works from then on
+```
+
+Upgrades then work as before: `bash scripts/install.sh`.
 
 ## 7. Copy backups off the server
 

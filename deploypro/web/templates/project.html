@@ -315,6 +315,36 @@
 </div></div>
 
 <div class="card"><div class="card-body">
+  <div class="row-title" style="margin-bottom:6px">Deploy key</div>
+  {% if project.deploy_key_public %}
+  <p class="hint" style="margin:0 0 10px">
+    Add this to the repository on GitHub: Settings → Deploy keys → Add deploy key.
+    Leave “Allow write access” off. DeployPro only reads.
+  </p>
+  <pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:0 0 10px">{{ project.deploy_key_public }}</pre>
+  {% if not repo_is_ssh %}
+  <p class="hint" style="margin:0 0 10px">
+    The repository URL is not an SSH URL, so this key is not used yet. Switch it
+    to the form <span class="mono">git@github.com:owner/repo.git</span>.
+  </p>
+  {% endif %}
+  <form method="post" action="/projects/{{ project.slug }}/deploy-key"
+        onsubmit="return confirm('Replace the deploy key? The current one stops working until the new one is added on GitHub.')">
+    <input type="hidden" name="rotate" value="1">
+    <button class="btn btn-small" type="submit">Replace key</button>
+  </form>
+  {% else %}
+  <p class="hint" style="margin:0 0 10px">
+    For a private repository: make a key here, add it to the repository as a
+    read-only deploy key, and use the repository's SSH URL.
+  </p>
+  <form method="post" action="/projects/{{ project.slug }}/deploy-key">
+    <button class="btn" type="submit">Make a deploy key</button>
+  </form>
+  {% endif %}
+</div></div>
+
+<div class="card"><div class="card-body">
   <div class="row-title" style="margin-bottom:6px">Delete this project</div>
   <p class="hint" style="margin:0 0 10px">
     Removes every deployment record and its routing. Running containers are

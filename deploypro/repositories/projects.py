@@ -14,7 +14,7 @@ from deploypro.repositories.rows import to_domain, to_env_var, to_project
 PROJECT_COLUMNS = """
     id, slug, name, repo_url, production_branch, root_directory,
     framework, install_command, build_command, start_command, port,
-    memory_mb, cpu_shares, keep_warm, stop_timeout_seconds,
+    memory_mb, cpu_shares, keep_warm, stop_timeout_seconds, deploy_key_public,
     production_deployment_id,
     webhook_secret, created_at, updated_at
 """
@@ -146,6 +146,37 @@ async def update(project_id: UUID, changes: dict[str, Any]) -> Project:
     if row is None:
         raise NotFound(f"No project with id {project_id}")
     return to_project(row)
+
+
+async def set_deploy_key(project_id: UUID, *, public: str, encrypted: bytes) -> Project:
+    async with db.connection() as conn:
+        cur = await conn.execute(
+            f"""
+            UPDATE projects
+               SET deploy_key_public = %s, deploy_key_encrypted = %s
+             WHERE id = %s
+            RETURNING {PROJECT_COLUMNS}
+            """,
+            (public, encrypted, project_id),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise NotFound(f"No project with id {project_id}")
+    return to_project(row)
+
+
+async def get_deploy_key_encrypted(project_id: UUID) -> bytes | None:
+    """The private half, still encrypted. Deliberately not a column on
+    PROJECT_COLUMNS: a Project travels to the API and the templates, and the
+    key has no business being anywhere near either."""
+    async with db.connection() as conn:
+        cur = await conn.execute(
+            "SELECT deploy_key_encrypted FROM projects WHERE id = %s", (project_id,)
+        )
+        row = await cur.fetchone()
+    if row is None or row["deploy_key_encrypted"] is None:
+        return None
+    return bytes(row["deploy_key_encrypted"])
 
 
 async def set_production(project_id: UUID, deployment_id: UUID | None) -> None:

@@ -108,6 +108,10 @@ class Project:
     #: suits a web server; a worker that renders video for twenty minutes
     #: needs the twenty minutes.
     stop_timeout_seconds: int
+    #: The public half of the project's deploy key, for showing to the owner.
+    #: The private half is never on this type — it is read, decrypted and
+    #: written to a 0600 file only for the length of one git command.
+    deploy_key_public: str | None
     production_deployment_id: UUID | None
     webhook_secret: str
     created_at: datetime

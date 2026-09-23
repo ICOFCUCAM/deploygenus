@@ -113,16 +113,20 @@ async def cmd_migrate(args: argparse.Namespace, settings: Settings) -> None:
 
 
 async def cmd_project_create(args: argparse.Namespace, settings: Settings) -> None:
+    from deploypro.domain.repo_url import is_ssh_url, validate_repo_url
+
     project = await project_repo.create(
         slug=args.slug or naming.slugify(args.name),
         name=args.name,
-        repo_url=args.repo,
+        repo_url=validate_repo_url(args.repo),
         production_branch=args.branch,
         root_directory=args.root or "",
     )
     print(f"created {project.slug} ({project.id})")
     print(f"  webhook  POST /webhooks/{project.slug}")
     print(f"  secret   {project.webhook_secret}")
+    if is_ssh_url(project.repo_url):
+        print("  private? deploypro project key " + project.slug)
 
 
 async def cmd_project_list(args: argparse.Namespace, settings: Settings) -> None:
@@ -257,6 +261,23 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
     print(f"  memory        {updated.memory_mb} MB, {updated.cpu_shares:g} CPU")
     print(f"  kept warm     {updated.keep_warm}")
     print("  applies to containers started from now on — deploy to apply it")
+
+
+async def cmd_project_key(args: argparse.Namespace, settings: Settings) -> None:
+    from deploypro.engine import gitaccess
+
+    project = await project_repo.resolve(args.project)
+    had = project.deploy_key_public
+    project = await gitaccess.ensure_key(project, settings, rotate=args.rotate)
+    if args.rotate and had:
+        print("new key made — the old one no longer works. Replace it on GitHub.")
+    elif not had:
+        print("deploy key made.")
+    print()
+    print(project.deploy_key_public)
+    print()
+    for line in gitaccess.instructions(project):
+        print(line)
 
 
 async def cmd_volume_add(args: argparse.Namespace, settings: Settings) -> None:
@@ -710,6 +731,14 @@ def _parser() -> argparse.ArgumentParser:
         "--keep-warm", type=int, help="superseded deployments kept running"
     )
     project_set.set_defaults(handler=cmd_project_set)
+    project_key = project.add_parser(
+        "key", help="show the deploy key for a private repository (makes one if needed)"
+    )
+    project_key.add_argument("project")
+    project_key.add_argument(
+        "--rotate", action="store_true", help="replace the key; the old one stops working"
+    )
+    project_key.set_defaults(handler=cmd_project_key)
 
     deploy = sub.add_parser("deploy", help="queue a deployment")
     deploy.add_argument("project")

@@ -101,6 +101,7 @@ class ProjectOut(BaseModel):
     cpu_shares: float
     keep_warm: int
     stop_timeout_seconds: int
+    deploy_key_public: str | None
     production_deployment_id: UUID | None
     created_at: datetime
 
@@ -119,6 +120,7 @@ class ProjectOut(BaseModel):
             cpu_shares=project.cpu_shares,
             keep_warm=project.keep_warm,
             stop_timeout_seconds=project.stop_timeout_seconds,
+            deploy_key_public=project.deploy_key_public,
             production_deployment_id=project.production_deployment_id,
             created_at=project.created_at,
         )

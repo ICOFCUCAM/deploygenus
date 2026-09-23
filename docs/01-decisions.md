@@ -389,3 +389,32 @@ minute-and-a-half failed deploy. The check now also reads Docker's restart
 count. Any restart during the health check means it crashed, and the deploy
 fails in seconds with the container's output in the log.
 
+## Private repositories use deploy keys, and tokens in URLs are refused
+
+A token in a clone URL is the easy way to reach a private repository, and every
+way it goes wrong is quiet. It is stored in plain text. It is printed in the
+deploy log and in git's errors. It reaches everything its owner can reach,
+and it expires on a date nobody remembers. So DeployPro refuses one in a URL
+and makes a deploy key instead: one Ed25519 key per project, read-only on one
+repository, never expiring, not tied to a person.
+
+The private half is encrypted with the master key, like a variable. For each
+git command it is decrypted into a 0600 file in a fresh 0700 directory and
+removed in a `finally`. Only the path is ever in the environment. It is made
+with `cryptography`, not `ssh-keygen`, so it never touches the disk
+unencrypted until git needs it.
+
+GitHub's host keys are pinned, checked against their published fingerprints
+when added, and pinned again by a unit test. Other hosts are trusted on first
+use and remembered. `accept-new` still refuses a remembered host whose key has
+changed, and the end-to-end run proves it by changing its own git server's key
+mid-run.
+
+`redact()` still blanks credentials out of git's output. Validation means none
+should arrive, but a redirect or a submodule URL could bring one, and the log is
+the last place it would be noticed.
+
+The image now installs `openssh-client`. It never had one, because
+`--no-install-recommends` drops git's recommended SSH client, so `git@` URLs
+could not have worked in the container before this.
+

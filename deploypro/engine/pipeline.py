@@ -22,7 +22,8 @@ from deploypro.domain import naming
 from deploypro.domain.detect import Overrides, detect
 from deploypro.domain.errors import DeployProError
 from deploypro.domain.models import Deployment, EnvTarget, LogStream, Project
-from deploypro.engine import environment, promote
+from deploypro.domain.repo_url import redact
+from deploypro.engine import environment, gitaccess, promote
 from deploypro.engine.launch import launch
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
@@ -63,7 +64,9 @@ async def run_deployment(deployment: Deployment, *, settings: Settings) -> Deplo
             f"({deployment.trigger.value})"
         )
 
-        app_dir = await _checkout(project, deployment, workdir=workdir, log=log)
+        app_dir = await _checkout(
+            project, deployment, workdir=workdir, log=log, settings=settings
+        )
         await deployment_repo.heartbeat(deployment.id)
 
         plan = await _plan(project, app_dir, log=log)
@@ -135,17 +138,27 @@ async def run_deployment(deployment: Deployment, *, settings: Settings) -> Deplo
 
 
 async def _checkout(
-    project: Project, deployment: Deployment, *, workdir: Path, log: LogWriter
+    project: Project,
+    deployment: Deployment,
+    *,
+    workdir: Path,
+    log: LogWriter,
+    settings: Settings,
 ) -> Path:
-    await log.system(f"cloning {project.repo_url} at {deployment.git_sha[:8]}")
-    repo_dir = workdir / "repo"
-    await source.fetch(
-        project.repo_url,
-        deployment.git_ref,
-        repo_dir,
-        sha=deployment.git_sha,
-        log=log.sink(LogStream.BUILD),
+    key = " with its deploy key" if project.deploy_key_public else ""
+    await log.system(
+        f"cloning {redact(project.repo_url)} at {deployment.git_sha[:8]}{key}"
     )
+    repo_dir = workdir / "repo"
+    async with gitaccess.git_env(project, settings) as env:
+        await source.fetch(
+            project.repo_url,
+            deployment.git_ref,
+            repo_dir,
+            sha=deployment.git_sha,
+            log=log.sink(LogStream.BUILD),
+            env=env,
+        )
 
     app_dir = repo_dir
     if project.root_directory:

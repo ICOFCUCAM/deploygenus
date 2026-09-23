@@ -11,9 +11,12 @@ from __future__ import annotations
 from uuid import UUID
 
 from deploypro.adapters import containers, source
-from deploypro.config import Settings
+from deploypro.config import Settings, get_settings
 from deploypro.domain import naming
+from deploypro.domain.errors import InvalidRequest
 from deploypro.domain.models import Deployment, DeploymentTrigger, Project
+from deploypro.domain.repo_url import is_ssh_url
+from deploypro.engine import gitaccess
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import projects as project_repo
 
@@ -36,7 +39,13 @@ async def queue_deploy(
     actually built.
     """
     reference = ref or project.production_branch
-    commit = sha or await source.resolve_head(project.repo_url, reference)
+    commit = sha
+    if commit is None:
+        async with gitaccess.git_env(project, get_settings()) as env:
+            try:
+                commit = await source.resolve_head(project.repo_url, reference, env=env)
+            except RuntimeError as exc:
+                raise InvalidRequest(_unreadable(project, str(exc))) from exc
 
     return await deployment_repo.create(
         project_id=project.id,
@@ -48,6 +57,32 @@ async def queue_deploy(
         git_author=author,
         rolled_back_from=rolled_back_from,
     )
+
+
+def _unreadable(project: Project, detail: str) -> str:
+    """Why the repository could not be read, and what to do about it."""
+    hint = ""
+    lowered = detail.lower()
+    if "permission denied" in lowered or "could not read from remote" in lowered:
+        hint = (
+            " If the repository is private, give DeployPro read access: "
+            f"`deploypro project key {project.slug}` prints a deploy key to add "
+            "to it."
+            if is_ssh_url(project.repo_url)
+            else " If it is private, switch the project to the repository's SSH URL "
+            "and add a deploy key."
+        )
+    elif "host key" in lowered:
+        hint = (
+            " The server's SSH identity is not the one DeployPro knows, so it "
+            "refused to connect. That is what an impostor looks like; if the "
+            "server really changed its key, remove its line from the known_hosts "
+            "file under the build root."
+        )
+    # All of git's message, on one line: its useful part ("Permission denied
+    # (publickey)") is rarely the last line, which is usually boilerplate.
+    said = " ".join(line.strip() for line in detail.splitlines() if line.strip())
+    return f"Could not read the repository: {said[:500]}.{hint}"
 
 
 async def redeploy(project: Project, deployment: Deployment) -> Deployment:

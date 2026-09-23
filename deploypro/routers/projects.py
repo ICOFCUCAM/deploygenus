@@ -11,7 +11,7 @@ from deploypro.domain.errors import InvalidRequest, NotFound
 from deploypro.domain.models import EnvTarget
 from deploypro.domain.repo_url import validate_repo_url
 from deploypro.domain.storage import normalise_mount_path, validate_volume_name
-from deploypro.engine import routing, verify
+from deploypro.engine import gitaccess, routing, verify
 from deploypro.repositories import projects as project_repo
 from deploypro.repositories import volumes as volume_repo
 from deploypro.routers.schemas import (
@@ -215,3 +215,26 @@ async def remove_volume(project: ProjectDep, name: str) -> Response:
     mistyped name away from an incident with no undo."""
     await volume_repo.delete(project.id, name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Deploy key
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{project_ref}/deploy-key")
+async def get_deploy_key(project: ProjectDep) -> dict[str, str]:
+    """The public half. The private half never leaves the database except,
+    decrypted, into a 0600 file for the length of one git command."""
+    if not project.deploy_key_public:
+        raise NotFound("This project has no deploy key yet — POST here to make one")
+    return {"public_key": project.deploy_key_public}
+
+
+@router.post("/{project_ref}/deploy-key", status_code=status.HTTP_201_CREATED)
+async def make_deploy_key(
+    project: ProjectDep, settings: SettingsDep, rotate: bool = False
+) -> dict[str, str]:
+    """Make the project's deploy key, or with `?rotate=true` replace it."""
+    project = await gitaccess.ensure_key(project, settings, rotate=rotate)
+    return {"public_key": project.deploy_key_public or ""}

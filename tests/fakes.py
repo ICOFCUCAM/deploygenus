@@ -46,6 +46,7 @@ def project(**kwargs) -> Project:
         cpu_shares=1.0,
         keep_warm=2,
         stop_timeout_seconds=10,
+        deploy_key_public=None,
         production_deployment_id=None,
         webhook_secret="a-webhook-secret-value",
         created_at=NOW,

@@ -345,3 +345,19 @@ class TestProcesses:
         an always-on process would otherwise write an unbounded log table."""
         response = await client.get("/projects/blog/processes/mailer")
         assert "docker logs" in response.text
+
+
+class TestDeployKey:
+    async def test_a_project_without_a_key_offers_to_make_one(self, client, repos):
+        body = (await client.get("/projects/blog")).text
+        assert "Make a deploy key" in body
+
+    async def test_the_public_key_is_shown_and_the_private_one_never(self, client, repos):
+        repos["projects"][0] = fakes.project(
+            repo_url="git@github.com:you/blog.git",
+            deploy_key_public="ssh-ed25519 AAAAC3Nzapublic deploypro@blog",
+        )
+        body = (await client.get("/projects/blog")).text
+        assert "ssh-ed25519 AAAAC3Nzapublic deploypro@blog" in body
+        assert "Replace key" in body
+        assert "PRIVATE KEY" not in body

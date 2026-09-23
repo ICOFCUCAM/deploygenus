@@ -43,6 +43,7 @@ def to_project(row: dict[str, Any]) -> Project:
         cpu_shares=float(row["cpu_shares"]),
         keep_warm=row["keep_warm"],
         stop_timeout_seconds=row["stop_timeout_seconds"],
+        deploy_key_public=row["deploy_key_public"],
         production_deployment_id=row["production_deployment_id"],
         webhook_secret=row["webhook_secret"],
         created_at=row["created_at"],
