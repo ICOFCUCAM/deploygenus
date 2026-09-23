@@ -257,7 +257,7 @@ cat <<EOF
 
 $(printf '\033[32m')DeployPro is running.$(printf '\033[0m')
 
-  Dashboard   https://${DEPLOYPRO_DASHBOARD_DOMAIN:-deploypro.$DEPLOYPRO_DEPLOY_DOMAIN}
+  Dashboard   https://${HOME_HOST:-deploypro.$DEPLOYPRO_DEPLOY_DOMAIN}
   Sign in     the DEPLOYPRO_API_TOKEN in $DEPLOYPRO_HOME/.env
 
   Now, before anything else:
