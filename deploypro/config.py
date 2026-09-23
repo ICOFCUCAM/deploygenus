@@ -167,8 +167,10 @@ def _public_url(scheme: str) -> str:
     explicit = _optional("DEPLOYPRO_PUBLIC_URL", "").rstrip("/")
     if explicit:
         return explicit
-    domain = _optional("DEPLOYPRO_DASHBOARD_DOMAIN", "").strip().strip("/").lower()
-    return f"{scheme}://{domain}" if domain else ""
+    # Possibly several, comma or space separated: the first is the dashboard's
+    # own, and the installer redirects the rest to it.
+    hosts = _optional("DEPLOYPRO_DASHBOARD_DOMAIN", "").replace(",", " ").split()
+    return f"{scheme}://{hosts[0].strip('/').lower()}" if hosts else ""
 
 
 @lru_cache(maxsize=1)

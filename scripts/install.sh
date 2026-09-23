@@ -192,19 +192,41 @@ mkdir -p "${DEPLOYPRO_BACKUP_HOST_DIR:-/var/backups/deploypro}"
 # a compose override so the tracked docker-compose.yml never changes, and
 # rewritten on every run so .env stays the one place it is set.
 OVERRIDE=docker-compose.override.yml
-if [ -n "${DEPLOYPRO_DASHBOARD_DOMAIN:-}" ]; then
-    cat >"$OVERRIDE" <<EOF
-# Written by scripts/install.sh from DEPLOYPRO_DASHBOARD_DOMAIN in .env.
-# Rewritten on every run: change .env, not this file.
-services:
-  api:
-    labels:
-      traefik.http.routers.deploypro-home.rule: Host(\`$DEPLOYPRO_DASHBOARD_DOMAIN\`)
-      traefik.http.routers.deploypro-home.entrypoints: websecure
-      traefik.http.routers.deploypro-home.tls.certresolver: le
-      traefik.http.routers.deploypro-home.service: deploypro-api
-EOF
-    note "dashboard also at https://$DEPLOYPRO_DASHBOARD_DOMAIN"
+# Several addresses may be given, separated by commas or spaces: the first is
+# the dashboard's, and the rest (www, say) redirect to it permanently, so the
+# browser always ends up on one address and signs in there once.
+read -r -a DASHBOARD_HOSTS <<<"$(echo "${DEPLOYPRO_DASHBOARD_DOMAIN:-}" | tr ',' ' ' | tr 'A-Z' 'a-z')"
+if [ "${#DASHBOARD_HOSTS[@]}" -gt 0 ]; then
+    HOME_HOST="${DASHBOARD_HOSTS[0]}"
+    {
+        echo "# Written by scripts/install.sh from DEPLOYPRO_DASHBOARD_DOMAIN in .env."
+        echo "# Rewritten on every run: change .env, not this file."
+        echo "services:"
+        echo "  api:"
+        echo "    labels:"
+        echo "      traefik.http.routers.deploypro-home.rule: Host(\`$HOME_HOST\`)"
+        echo "      traefik.http.routers.deploypro-home.entrypoints: websecure"
+        echo "      traefik.http.routers.deploypro-home.tls.certresolver: le"
+        echo "      traefik.http.routers.deploypro-home.service: deploypro-api"
+        if [ "${#DASHBOARD_HOSTS[@]}" -gt 1 ]; then
+            rule=""
+            for host in "${DASHBOARD_HOSTS[@]:1}"; do
+                rule="${rule:+$rule || }Host(\`$host\`)"
+            done
+            echo "      traefik.http.routers.deploypro-alias.rule: $rule"
+            echo "      traefik.http.routers.deploypro-alias.entrypoints: websecure"
+            echo "      traefik.http.routers.deploypro-alias.tls.certresolver: le"
+            echo "      traefik.http.routers.deploypro-alias.service: deploypro-api"
+            echo "      traefik.http.routers.deploypro-alias.middlewares: deploypro-to-home"
+            # \$\$ is compose's escape for a literal \$, which Traefik reads as
+            # the path captured by the regex.
+            echo "      traefik.http.middlewares.deploypro-to-home.redirectregex.regex: ^https?://[^/]+(.*)"
+            echo "      traefik.http.middlewares.deploypro-to-home.redirectregex.replacement: https://$HOME_HOST\$\${1}"
+            echo "      traefik.http.middlewares.deploypro-to-home.redirectregex.permanent: \"true\""
+        fi
+    } >"$OVERRIDE"
+    note "dashboard also at https://$HOME_HOST"
+    for host in "${DASHBOARD_HOSTS[@]:1}"; do note "  https://$host redirects there"; done
 elif grep -qs "Written by scripts/install.sh" "$OVERRIDE"; then
     rm -f "$OVERRIDE"
 fi

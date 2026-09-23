@@ -184,11 +184,14 @@ have it at the bare domain (`https://deploypro.us`), where visitors get the
 sign-in page:
 
 1. Cloudflare → DNS → **Add record**: type **A**, name **@**, IPv4 the
-   server's IP, proxy **DNS only**.
-2. On the server, add one line to `/opt/deploypro/.env`:
+   server's IP, proxy **DNS only**. For `www.deploypro.us` as well, add a
+   second record: type **CNAME**, name **www**, target **deploypro.us**, DNS only.
+2. On the server, add one line to `/opt/deploypro/.env` (leave out
+   `,www.deploypro.us` if you skipped that record):
    ```bash
-   echo 'DEPLOYPRO_DASHBOARD_DOMAIN=deploypro.us' >> /opt/deploypro/.env
+   echo 'DEPLOYPRO_DASHBOARD_DOMAIN=deploypro.us,www.deploypro.us' >> /opt/deploypro/.env
    ```
+   The first address is the dashboard's; `www` redirects to it.
 3. Run the installer again: `cd /opt/deploypro && bash scripts/install.sh`.
 
 The first visit can take a minute while the certificate is issued. Do this
