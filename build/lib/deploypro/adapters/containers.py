@@ -138,18 +138,21 @@ async def run(spec: RunSpec, *, log: LogSink | None = None) -> str:
     }
     if spec.cert_resolver:
         labels[f"traefik.http.routers.{spec.router}.entrypoints"] = "websecure"
-        # `tls=true`, and deliberately no certResolver: the router inherits the
-        # entrypoint's default certificate, which is the wildcard covering the
-        # whole deploy domain.
+        # No TLS label at all — not even `tls=true`. The router inherits the
+        # websecure entrypoint's default TLS: the `wildcard` resolver and the
+        # *.deploy-domain certificate. Traefik applies that default only to a
+        # router whose TLS is unset (applyModel: `if cp.TLS == nil`), and
+        # `tls=true` sets it to an empty value, which silently opts the router
+        # out: no resolver, no certificate request, Traefik's self-signed
+        # default served instead. That is what the first real install did.
         #
-        # Naming a resolver here would instead ask the CA for a certificate per
-        # deployment hostname. Let's Encrypt issues 50 new certificates per
-        # registered domain per week, and this platform mints a brand new
-        # hostname on every deploy — so about seven deploys a day would exhaust
-        # the week and then fail to issue anything at all, including for the
-        # custom domains that carry the real traffic. One wildcard, issued once,
-        # has no such ceiling.
-        labels[f"traefik.http.routers.{spec.router}.tls"] = "true"
+        # And no resolver of its own either: naming one would ask the CA for a
+        # certificate per deployment hostname. Let's Encrypt issues 50 new
+        # certificates per registered domain per week, and this platform
+        # mints a brand new hostname on every deploy — about seven deploys a
+        # day would exhaust the week and then fail to issue anything, including
+        # for the custom domains that carry the real traffic. One wildcard,
+        # issued once, has no such ceiling.
     else:
         labels[f"traefik.http.routers.{spec.router}.entrypoints"] = "web"
 

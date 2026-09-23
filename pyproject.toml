@@ -32,6 +32,14 @@ deploypro = "deploypro.cli:main"
 [tool.setuptools.packages.find]
 include = ["deploypro*"]
 
+# Non-Python files the package needs at run time. Without this a real
+# (non-editable) install carries only .py files: the dashboard has no
+# templates or stylesheet. It went unnoticed because the image starts the web
+# server from /app, where the source tree sits — the same blind spot that let
+# `migrate` find no migrations from the installed package.
+[tool.setuptools.package-data]
+deploypro = ["web/templates/*.html", "web/static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

@@ -361,3 +361,39 @@ class TestDeployKey:
         assert "ssh-ed25519 AAAAC3Nzapublic deploypro@blog" in body
         assert "Replace key" in body
         assert "PRIVATE KEY" not in body
+
+
+def test_every_static_file_a_page_refers_to_exists():
+    """The rename to DeployPro changed `/static/forge.css` to
+    `/static/deploypro.css` in the templates but not the file's name, and the
+    first real install served every page unstyled."""
+    import re
+    from pathlib import Path
+
+    web = Path(__file__).parent.parent / "deploypro" / "web"
+    referenced = set()
+    for template in (web / "templates").glob("*.html"):
+        referenced.update(re.findall(r"/static/([\w.-]+)", template.read_text()))
+    assert referenced, "no template refers to a static file — the check found nothing"
+    missing = sorted(name for name in referenced if not (web / "static" / name).is_file())
+    assert missing == []
+
+
+async def test_the_stylesheet_is_actually_served(anon):
+    response = await anon.get("/static/deploypro.css")
+    assert response.status_code == 200
+    assert "text/css" in response.headers["content-type"]
+
+
+def test_a_real_install_carries_the_templates_and_static_files():
+    """Without package-data, a non-editable install has only .py files. The
+    image hid it by starting the web server from the source tree."""
+    import tomllib
+    from pathlib import Path
+
+    pyproject = tomllib.loads(
+        (Path(__file__).parent.parent / "pyproject.toml").read_text()
+    )
+    shipped = pyproject["tool"]["setuptools"]["package-data"]["deploypro"]
+    assert "web/templates/*.html" in shipped
+    assert "web/static/*" in shipped
