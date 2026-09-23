@@ -112,7 +112,8 @@ services:
       traefik.docker.network: ${DEPLOYPRO_NETWORK:-deploypro}
       traefik.http.routers.deploypro-api.rule: Host(`deploypro.${DEPLOYPRO_DEPLOY_DOMAIN}`)
       traefik.http.routers.deploypro-api.entrypoints: websecure
-      traefik.http.routers.deploypro-api.tls: "true"
+      # Deliberately no `tls: "true"`: that would opt this router out of the
+      # entrypoint's wildcard certificate (see deploypro/adapters/containers.py).
       traefik.http.services.deploypro-api.loadbalancer.server.port: "8000"
     networks:
       - deploypro

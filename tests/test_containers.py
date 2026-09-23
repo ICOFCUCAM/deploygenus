@@ -9,6 +9,7 @@ to the wrong name is a worker killed mid-render.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -274,3 +275,21 @@ async def test_draining_a_container_deleted_by_hand_is_not_an_error(docker):
     """What the end-to-end run's disaster drill hit on Docker 29."""
     docker.failures["inspect"] = "error: no such object: 5b9451403a7f"
     await containers.drain("5b9451403a7f", grace=10, now=0)
+
+
+async def test_a_deployment_router_inherits_the_wildcard_certificate(docker):
+    """No tls label at all. Traefik applies the entrypoint's TLS default (the
+    wildcard resolver) only when a router's TLS is unset, and `tls=true` sets
+    it to an empty value — which is how the first real install ended up
+    serving Traefik's self-signed certificate with no ACME request at all."""
+    await containers.run(TestRun().spec(cert_resolver="le"))
+    args = docker.called("run")[0]
+    labels = [args[i + 1] for i, a in enumerate(args) if a == "--label"]
+    assert "traefik.http.routers.bv-1234abcd.entrypoints=websecure" in labels
+    assert not [label for label in labels if ".tls" in label]
+
+
+def test_the_dashboard_router_inherits_it_too():
+    compose = (Path(__file__).parent.parent / "docker-compose.yml").read_text()
+    assert "routers.deploypro-api.entrypoints: websecure" in compose
+    assert "routers.deploypro-api.tls" not in compose
