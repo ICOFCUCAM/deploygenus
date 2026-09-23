@@ -181,7 +181,8 @@ if [ -z "${DATABASE_URL:-}" ]; then
     export DATABASE_URL="postgresql://forge@127.0.0.1:$PG_PORT/forge"
 fi
 
-export FORGE_MASTER_KEY="$("$FORGE" keygen)"
+FORGE_MASTER_KEY="$("$FORGE" keygen)"
+export FORGE_MASTER_KEY
 export FORGE_API_TOKEN=e2e-token
 export FORGE_DEPLOY_DOMAIN=deploys.test
 export FORGE_CERT_RESOLVER=

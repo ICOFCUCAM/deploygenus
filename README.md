@@ -126,6 +126,23 @@ restart rather than a rebuild.
 
 ## Setting it up
 
+**On a fresh Ubuntu or Debian server, one command does all of it:**
+
+```bash
+git clone https://github.com/ICOFCUCAM/deploygenus.git /opt/forge && cd /opt/forge
+FORGE_DEPLOY_DOMAIN=deploys.example.com FORGE_ACME_EMAIL=you@example.com \
+CF_DNS_API_TOKEN=… bash scripts/install.sh
+```
+
+It installs Docker and generates the secrets. It checks your DNS and opens the
+firewall. It starts the stack, migrates and runs `forge doctor`. It also
+installs a `forge` command on the server. Run it again to upgrade.
+[docs/02-hetzner-cloudflare.md](docs/02-hetzner-cloudflare.md) walks through
+the whole thing on Hetzner with Cloudflare DNS, from creating the server to a
+live site.
+
+The manual steps, if you would rather see each one:
+
 You need a host with Docker, a domain, and a DNS provider with an API token.
 
 **1. DNS.** Point a wildcard at the host:
