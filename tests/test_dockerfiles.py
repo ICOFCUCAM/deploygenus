@@ -191,3 +191,29 @@ def test_a_single_page_app_has_no_error_handler(repo):
     handler and one would only be dead configuration."""
     caddyfile = _caddyfile(detect(repo(FIXTURES["vite"])))
     assert "handle_errors" not in caddyfile
+
+
+def test_the_static_server_has_its_file_capabilities_stripped(plan):
+    """The caddy image sets cap_net_bind_service on its binary so a non-root
+    user can bind :80. Every container here runs with no-new-privileges, under
+    which the kernel refuses to exec a file that carries capabilities at all —
+    so the image the platform generates could not start its own web server.
+    The failure is `exec /usr/bin/caddy: operation not permitted`, which reads
+    like a corrupt image rather than a run-time flag, and it applied to every
+    static site the platform could build."""
+    if _caddyfile(plan) is None:
+        return
+    runtime = plan.dockerfile.split("AS run", 1)[1]
+    assert "setcap -r /usr/bin/caddy" in runtime
+    # Before USER: dropping a capability needs the privileges being dropped.
+    assert runtime.index("setcap -r") < runtime.index("USER ")
+
+
+def test_stripping_the_capability_leaves_nothing_behind(plan):
+    """Installed as a virtual package and removed again, so the runtime image
+    does not carry a package manager's worth of extra for a one-line fix."""
+    if _caddyfile(plan) is None:
+        return
+    runtime = plan.dockerfile.split("AS run", 1)[1]
+    assert "--virtual .setcap" in runtime
+    assert "apk del .setcap" in runtime
