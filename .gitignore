@@ -6,3 +6,10 @@ __pycache__/
 .env
 *.egg-info/
 docker-compose.override.yml
+
+# Build artefacts. `build/` committed by mistake once misdirected a
+# merge: git matched a renamed source file to its stale copy under build/lib
+# and applied the change there, leaving the real module untouched.
+build/
+dist/
+*.egg-info/

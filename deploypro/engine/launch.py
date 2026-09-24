@@ -120,8 +120,17 @@ async def launch(
         tail = await containers.logs(container_id, tail=100)
         await log.system(f"health check failed: {result.detail}")
         await log.system("--- last 100 lines from the container ---")
-        for line in tail.splitlines():
+        lines = tail.splitlines()
+        for line in lines:
             await log.write(line, stream=LogStream.RUN)
+        if not lines:
+            # An empty section under that heading reads as "the platform is
+            # broken", and is indistinguishable from a log that was captured
+            # and dropped. Say which it is.
+            await log.system(
+                "(the container produced no output at all — it was killed "
+                "before it wrote anything, or its entrypoint is wrong)"
+            )
         await containers.remove(container_id, force=True)
         await log.flush()
         raise DeployFailed(f"The container never became healthy: {result.detail}")
