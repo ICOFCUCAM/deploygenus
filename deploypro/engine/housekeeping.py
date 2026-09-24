@@ -26,6 +26,11 @@ logger = logging.getLogger("deploypro.housekeeping")
 
 #: BuildKit cache untouched for a week goes. Caches in use stay warm however
 #: old they are, because "until" counts from last use.
+#:
+#: Age is only half the rule. A cache that grows twelve gigabytes in a day —
+#: one project with a 4.5 GB image, deployed a few times — contains nothing a
+#: week old, so this filter alone removes none of it and the disk fills
+#: regardless. `settings.build_cache_max_gb` is the other half.
 BUILD_CACHE_HOURS = 24 * 7
 
 
@@ -40,7 +45,8 @@ async def run(settings: Settings) -> dict[str, object]:
 
     try:
         report["build_cache"] = await containers.prune_build_cache(
-            older_than_hours=BUILD_CACHE_HOURS
+            older_than_hours=BUILD_CACHE_HOURS,
+            max_bytes=settings.build_cache_max_gb * 1024**3,
         )
     except Exception as exc:  # noqa: BLE001 - each step stands alone
         logger.exception("build cache prune failed")

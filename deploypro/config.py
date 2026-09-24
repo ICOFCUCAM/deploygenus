@@ -111,6 +111,15 @@ class Settings:
 
     #: Build logs and job runs older than this are deleted, except the build
     #: log of whatever is serving production.
+    #: Ceiling on BuildKit's cache, in gigabytes.
+    #:
+    #: The age rule alone is not enough and a real host proved it: a week's
+    #: "until" filter never fires on a cache that grows twelve gigabytes in a
+    #: day, which is what a project with a 4.5 GB image does after a handful
+    #: of deploys. The disk filled anyway, Docker evicted images to cope, and
+    #: one of them was the image its owner was about to inspect.
+    build_cache_max_gb: int = 8
+
     log_retention_days: int = 30
 
     #: Alert when the disk holding the build root is fuller than this.
@@ -209,6 +218,7 @@ def get_settings() -> Settings:
         pool_max_size=_int("DEPLOYPRO_POOL_MAX", 8),
         alert_webhook_url=_optional("DEPLOYPRO_ALERT_WEBHOOK_URL", ""),
         keep_images=max(_int("DEPLOYPRO_KEEP_IMAGES", 10), 0),
+        build_cache_max_gb=max(_int("DEPLOYPRO_BUILD_CACHE_MAX_GB", 8), 1),
         log_retention_days=max(_int("DEPLOYPRO_LOG_RETENTION_DAYS", 30), 1),
         disk_alert_percent=min(max(_int("DEPLOYPRO_DISK_ALERT_PERCENT", 90), 1), 100),
         monitor_interval_seconds=max(_int("DEPLOYPRO_MONITOR_INTERVAL", 60), 1),

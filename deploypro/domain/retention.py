@@ -26,6 +26,7 @@ def images_to_keep(
     """Every image tag of this project that must survive a sweep."""
     kept: set[str] = set()
     ready: list[Deployment] = []
+    failed: list[Deployment] = []
     for deployment in deployments:
         if (
             deployment.status in {DeploymentStatus.QUEUED}
@@ -45,8 +46,25 @@ def images_to_keep(
             kept.add(deployment.image_tag)
         if deployment.status is DeploymentStatus.READY:
             ready.append(deployment)
+        elif deployment.status is DeploymentStatus.FAILED:
+            failed.append(deployment)
+
     ready.sort(key=lambda d: d.number, reverse=True)
     kept.update(d.image_tag for d in ready[:keep] if d.image_tag)
+
+    # The newest failure, and only that one. A failed deployment is never a
+    # rollback target, so by the rule above its image goes on the next hourly
+    # sweep — which is precisely the image somebody wants to run by hand to
+    # find out why it failed. That happened: the sweep removed it between the
+    # deploy failing and its owner reaching a terminal, and the answer had to
+    # be recovered by deploying again.
+    #
+    # One, not `keep`, because a project that fails repeatedly would otherwise
+    # hold a disk full of images nothing will ever run again.
+    failed.sort(key=lambda d: d.number, reverse=True)
+    if failed and failed[0].image_tag:
+        kept.add(failed[0].image_tag)
+
     return kept
 
 

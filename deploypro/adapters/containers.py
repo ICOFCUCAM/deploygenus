@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import shlex
 import time
@@ -25,6 +26,8 @@ from pathlib import Path
 from deploypro.domain.storage import Mount, draining_deadline, draining_name
 
 LogSink = Callable[[str], Awaitable[None]]
+
+logger = logging.getLogger("deploypro.containers")
 
 #: Label carried by everything DeployPro creates, so reconciliation can find its
 #: own containers without mistaking a hand-started one for an orphan.
@@ -529,24 +532,65 @@ async def list_deploypro_images(instance: str) -> list[str]:
     return sorted({line.strip() for line in out.splitlines() if ":" in line.strip()})
 
 
-async def prune_build_cache(*, older_than_hours: int) -> str:
-    """Drop BuildKit cache nobody has used for a while.
+async def prune_build_cache(
+    *, older_than_hours: int, max_bytes: int | None = None
+) -> str:
+    """Drop BuildKit cache, by age and then by size.
 
     This is the layer cache and the package-manager caches together. Both
     regrow on the next build that needs them; neither is worth a full disk.
+
+    Age alone is not enough, and a real host showed why: `until=168h` never
+    fires on a cache that grew twelve gigabytes in a day, because none of it
+    is a week old. The disk filled, Docker evicted images to make room, and
+    took one its owner was about to inspect. So a ceiling runs afterwards,
+    which bounds the cache no matter how fast it arrived.
+
+    The ceiling's flag was renamed: `--keep-storage` on older Docker,
+    `--max-used-space` on newer buildx. Both are tried, because a platform
+    that installs itself on whatever host it is given does not get to assume
+    one. An unknown flag is the only error that moves on to the next; anything
+    else is a real failure and is raised.
     """
-    out = await _capture(
-        [
-            "builder",
-            "prune",
-            "--force",
-            "--filter",
-            f"until={older_than_hours}h",
-        ],
+    reports: list[str] = []
+
+    aged = await _capture(
+        ["builder", "prune", "--force", "--filter", f"until={older_than_hours}h"],
         timeout=600,
     )
-    lines = [line for line in out.splitlines() if line.strip()]
+    reports.append(_last_line(aged))
+
+    if max_bytes:
+        for flag in ("--keep-storage", "--max-used-space"):
+            try:
+                capped = await _capture(
+                    ["builder", "prune", "--force", f"{flag}={max_bytes}"],
+                    timeout=600,
+                )
+            except DockerError as exc:
+                if _is_unknown_flag(exc):
+                    continue
+                raise
+            reports.append(_last_line(capped))
+            break
+        else:
+            logger.warning(
+                "neither --keep-storage nor --max-used-space is supported by "
+                "this Docker; the build cache is bounded by age alone"
+            )
+
+    return " | ".join(report for report in reports if report)
+
+
+def _last_line(output: str) -> str:
+    """`docker builder prune` ends with "Total reclaimed space: …"."""
+    lines = [line for line in output.splitlines() if line.strip()]
     return lines[-1] if lines else ""
+
+
+def _is_unknown_flag(exc: DockerError) -> bool:
+    message = str(exc).lower()
+    return "unknown flag" in message or "unknown shorthand" in message
 
 
 async def export_volume(volume: str, image: str, dest: Path) -> None:

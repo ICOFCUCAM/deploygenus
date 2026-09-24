@@ -75,8 +75,41 @@ class TestKeep:
         assert "deploypro/blog:000000000001" in kept
 
     def test_failed_deployments_are_not_rollback_targets(self):
+        """…with one exception, below: only the newest survives."""
         failed = history(3, status=DeploymentStatus.FAILED)
-        assert images_to_keep(fakes.project(), failed, keep=10) == set()
+        kept = images_to_keep(fakes.project(), failed, keep=10)
+        assert kept == {failed[0].image_tag}
+        assert failed[1].image_tag not in kept
+        assert failed[2].image_tag not in kept
+
+    def test_the_newest_failure_is_kept_so_it_can_be_inspected(self):
+        """The image of a failed deploy is the one somebody wants to run by
+        hand. Sweeping it immediately — correct by the rollback rule — took it
+        away between a deployment failing and its owner reaching a terminal.
+
+        One only: a project failing in a loop must not fill the disk with
+        images nothing will ever run again.
+        """
+        failed = history(12, status=DeploymentStatus.FAILED)
+        kept = images_to_keep(fakes.project(), failed, keep=10)
+        assert kept == {failed[0].image_tag}
+
+    def test_a_failure_does_not_displace_a_rollback_target(self):
+        """The newest failure is kept in addition to the ready ones, never
+        instead of one of them."""
+        ready = history(3)
+        failed = [
+            fakes.deployment(
+                id=uuid4(),
+                number=99,
+                git_sha=sha(99),
+                image_tag=naming.image_tag("blog", sha(99)),
+                container_id=None,
+                status=DeploymentStatus.FAILED,
+            )
+        ]
+        kept = images_to_keep(fakes.project(), failed + ready, keep=3)
+        assert kept == {d.image_tag for d in ready} | {failed[0].image_tag}
 
     def test_keep_zero_still_keeps_production(self):
         deployments = history(5)
