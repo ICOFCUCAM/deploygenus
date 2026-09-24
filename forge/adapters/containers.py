@@ -222,10 +222,38 @@ async def container_ip(container_id: str, network: str) -> str | None:
 
 
 async def logs(container_id: str, *, tail: int = 200) -> str:
+    """The container's output, BOTH streams, oldest line first.
+
+    `docker logs` reproduces the container's stdout on its stdout and the
+    container's stderr on its stderr. Capturing only stdout therefore drops
+    every traceback, every `ConfigError`, and every line a crashing process
+    wrote on its way out — which is the entire reason anyone reads this.
+
+    That is not hypothetical: it shipped. A deployment failed its health
+    check, the deploy log printed "last 100 lines from the container" and then
+    nothing at all, and the container was destroyed immediately afterwards, so
+    the one explanation of the failure existed nowhere. Hence `_capture` is
+    not used here: the streams are merged at the pipe so ordering between them
+    survives too.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "logs",
+        "--tail",
+        str(tail),
+        container_id,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=_env(buildkit=False),
+    )
     try:
-        return await _capture(["logs", "--tail", str(tail), container_id])
-    except DockerError as exc:
-        return f"(could not read container logs: {exc})"
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+    except TimeoutError:
+        proc.kill()
+        return "(timed out reading the container's logs)"
+    if proc.returncode != 0:
+        return f"(could not read the container's logs: exit {proc.returncode})"
+    return stdout.decode(errors="replace")
 
 
 async def ensure_network(name: str) -> None:
