@@ -39,7 +39,7 @@ real Postgres.** `scripts/e2e/run.sh` deploys a test app from a git push, then:
   address stops answering, and that the worker removes containers left by a
   deleted project without touching another installation's
 
-It makes 110 checks in about four minutes. The first 79 passed ten runs in a
+It makes 113 checks in about four minutes. The first 79 passed ten runs in a
 row. Its runs have found five bugs that would have hit real installations.
 All five are fixed.
 
