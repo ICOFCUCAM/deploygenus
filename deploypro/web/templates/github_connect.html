@@ -1,44 +1,43 @@
 {% extends "base.html" %}
+{% from "_macros.html" import message %}
 {% block title %}Connect GitHub — DeployPro{% endblock %}
 {% block content %}
-<div class="breadcrumb"><a href="/">Projects</a> / <a href="/projects/new">new</a> / GitHub</div>
-<div class="page-head"><h1>Connect GitHub</h1></div>
+<p class="crumbs"><a href="/">Projects</a> › <a href="/projects/new">New project</a> › GitHub</p>
+<div class="head"><div class="head-main"><h1>Connect GitHub</h1></div></div>
+{{ message('', err) }}
 
-<div class="card"><div class="card-body">
-  <p style="margin-top:0">
+<div class="form">
+  <p>
     DeployPro makes its own GitHub App, owned by
     {% if org %}the <span class="mono">{{ org }}</span> organisation{% else %}your GitHub account{% endif %}.
     Its private key and secret are created by GitHub and sent straight to this
     server, and exist nowhere else.
   </p>
-  <ol class="dim" style="font-size:14px;line-height:1.7">
-    <li>Press the button. GitHub shows the app it is about to make,
-        <span class="mono">{{ app_name }}</span>. You can rename it there.</li>
-    <li>Press <b>Create GitHub App</b> on GitHub.</li>
-    <li>GitHub asks where to install it: choose your account, then
-        <b>All repositories</b> or just the ones to deploy.</li>
+  <ol>
+    <li>Press the button. GitHub shows the app it is about to make, <span class="mono">{{ app_name }}</span>. You can rename it there.</li>
+    <li>Press <strong>Create GitHub App</strong> on GitHub.</li>
+    <li>GitHub asks where to install it: choose your account, then <strong>All repositories</strong> or just the ones to deploy.</li>
     <li>You come back to New project, with your repositories listed.</li>
   </ol>
-  <dl class="kv">
-    <dt>It may</dt>
-    <dd>read repository contents and metadata. Nothing is ever written to GitHub.</dd>
-    <dt>It hears</dt>
-    <dd>pushes, at <span class="mono">{{ dashboard_url }}/github/webhook</span></dd>
-    <dt>Visibility</dt>
-    <dd>private: only its owner can install it</dd>
+  <dl class="facts">
+    <dt>It may</dt><dd>read repository contents and metadata. Nothing is ever written to GitHub.</dd>
+    <dt>It hears</dt><dd>pushes, at <span class="mono">{{ dashboard_url }}/github/webhook</span></dd>
+    <dt>Visibility</dt><dd>private: only its owner can install it</dd>
   </dl>
-
   <form method="post" action="{{ action }}">
     <input type="hidden" name="manifest" value="{{ manifest }}">
     <button class="btn btn-primary" type="submit">Create the app on GitHub</button>
   </form>
-</div></div>
+</div>
 
-<div class="card"><div class="card-body">
-  <form method="get" action="/github/connect" class="inline-form">
-    <label for="org" class="hint">For an organisation's repositories, make the app there instead:</label>
-    <input type="text" id="org" name="org" value="{{ org }}" placeholder="organisation name">
-    <button class="btn btn-small" type="submit">Use this organisation</button>
+<section class="section" aria-labelledby="org-h">
+  <h2 id="org-h">For an organisation</h2>
+  <form method="get" action="/github/connect" class="fields-inline" style="margin-top:16px;max-width:560px">
+    <div class="field">
+      <label for="org">Organisation name</label>
+      <input class="mono-input" type="text" id="org" name="org" value="{{ org }}" placeholder="organisation name">
+    </div>
+    <button class="btn btn-secondary" type="submit">Use this organisation</button>
   </form>
-</div></div>
+</section>
 {% endblock %}

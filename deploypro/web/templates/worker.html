@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, message, confirm %}
+{% block title %}{{ p.name }} — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<p class="crumbs"><a href="/projects/{{ project.slug }}/runtime/workers">Workers</a> › {{ p.name }}</p>
+<div class="head">
+  <div class="head-main">
+    <h1 class="mono">{{ p.name }}</h1>
+    <p class="head-sub">{% if mark %}{{ status(mark) }} <span class="sep"></span>{% endif %}{{ sentence }}</p>
+  </div>
+  <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+</div>
+{{ message(ok, err) }}
+
+<div class="actions">
+  <form method="post" action="/projects/{{ project.slug }}/processes/{{ p.name }}/toggle">
+    <input type="hidden" name="back" value="{{ request.url.path }}">
+    <button class="btn btn-primary" type="submit">{{ 'Resume' if not p.enabled else 'Pause' }}</button>
+  </form>
+</div>
+
+<section class="section" aria-labelledby="definition">
+  <h2 id="definition">Definition</h2>
+  <dl class="facts" style="margin-top:12px">
+    <dt>Command</dt><dd class="mono">{{ p.command or "the image's own command" }}</dd>
+    <dt>Replicas</dt><dd>{{ p.replicas }}</dd>
+    <dt>Memory</dt><dd>{{ p.memory_mb }} MB</dd>
+    <dt>Runs</dt><dd>the production deployment's image, never a preview</dd>
+    <dt>On deploy</dt><dd>The new worker starts from the new image. The previous one is asked to stop and has up to {{ project.stop_timeout_seconds }} s to finish its work (the graceful shutdown time, set on <a href="/projects/{{ project.slug }}/config/build">Build</a>).</dd>
+    <dt>Output</dt><dd>In the container's log on the server: <span class="mono">docker logs deploypro-{{ project.slug }}-{{ p.name }}-0</span></dd>
+  </dl>
+</section>
+
+<div class="danger-zone">
+  <h2>Remove worker</h2>
+  {{ confirm('Remove ' ~ p.name, '/projects/' ~ project.slug ~ '/processes/' ~ p.name ~ '/delete', 'This can’t be undone. The definition is deleted; the worker stops at the next deploy.') }}
+</div>
+{% endblock %}

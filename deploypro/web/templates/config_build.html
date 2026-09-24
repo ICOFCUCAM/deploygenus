@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "_macros.html" import message %}
+{% block title %}Build — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Build</h1>
+    <p class="head-sub">How {{ project.name }} is built and run. Leave a field empty to let DeployPro detect it.</p>
+  </div>
+</div>
+{{ message(ok, err) }}
+
+<form class="form" method="post" action="/projects/{{ project.slug }}/config/build">
+  <div class="form-group">
+    <h3>Build</h3>
+    <p class="group-note">Applies to the next deploy.</p>
+    <div class="fields-2">
+      <div class="field">
+        <label for="framework">Framework</label>
+        <input class="mono-input" type="text" id="framework" name="framework" value="{{ project.framework or '' }}" placeholder="{{ detected or 'detected automatically' }}" aria-describedby="framework_hint">
+        <p class="hint" id="framework_hint">{% if detected %}Last detected: <span class="mono">{{ detected }}</span>.{% else %}Detected on the first deploy.{% endif %} A Dockerfile in the repository is always used as it is.</p>
+      </div>
+      <div class="field">
+        <label for="root_directory">Root directory</label>
+        <input class="mono-input" type="text" id="root_directory" name="root_directory" value="{{ project.root_directory }}" placeholder="the repository root">
+      </div>
+    </div>
+    <div class="field">
+      <label for="install_command">Install command</label>
+      <input class="mono-input" type="text" id="install_command" name="install_command" value="{{ project.install_command or '' }}" placeholder="detected">
+    </div>
+    <div class="fields-2">
+      <div class="field">
+        <label for="build_command">Build command</label>
+        <input class="mono-input" type="text" id="build_command" name="build_command" value="{{ project.build_command or '' }}" placeholder="detected">
+      </div>
+      <div class="field">
+        <label for="start_command">Start command</label>
+        <input class="mono-input" type="text" id="start_command" name="start_command" value="{{ project.start_command or '' }}" placeholder="detected">
+      </div>
+    </div>
+    <div class="field" style="max-width:200px">
+      <label for="port">Port</label>
+      <input class="mono-input" type="text" inputmode="numeric" id="port" name="port" value="{{ project.port or '' }}" placeholder="detected" aria-describedby="port_hint">
+      <p class="hint" id="port_hint">The port the app listens on inside its container.</p>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <h3>Resources</h3>
+    <p class="group-note">Applies to the next deploy.</p>
+    <div class="fields-2">
+      <div class="field">
+        <label for="memory_mb">Memory (MB)</label>
+        <input type="text" inputmode="numeric" id="memory_mb" name="memory_mb" value="{{ project.memory_mb }}">
+      </div>
+      <div class="field">
+        <label for="cpu_shares">CPU</label>
+        <input type="text" inputmode="decimal" id="cpu_shares" name="cpu_shares" value="{{ project.cpu_shares }}" aria-describedby="cpu_hint">
+        <p class="hint" id="cpu_hint">How many CPUs it may use, e.g. 0.5 or 2.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <h3>Deployment behaviour</h3>
+    <div class="fields-2">
+      <div class="field">
+        <label for="keep_warm">Instant rollback: keep running</label>
+        <input type="text" inputmode="numeric" id="keep_warm" name="keep_warm" value="{{ project.keep_warm }}" aria-describedby="keep_hint">
+        <p class="hint" id="keep_hint">How many previous deployments stay running, so rolling back to them is instant. Older ones restart from their image in a few seconds. Applies to the next deploy.</p>
+      </div>
+      <div class="field">
+        <label for="stop_timeout_seconds">Graceful shutdown time (seconds)</label>
+        <input type="text" inputmode="numeric" id="stop_timeout_seconds" name="stop_timeout_seconds" value="{{ project.stop_timeout_seconds }}" aria-describedby="stop_hint">
+        <p class="hint" id="stop_hint">How long a replaced container gets to finish its work. Applies to the next replacement.</p>
+      </div>
+    </div>
+  </div>
+
+  <div><button class="btn btn-primary" type="submit">Save</button></div>
+</form>
+{% endblock %}

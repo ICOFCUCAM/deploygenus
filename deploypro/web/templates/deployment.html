@@ -1,94 +1,103 @@
 {% extends "base.html" %}
-{% from "_macros.html" import status_pill %}
-{% block title %}#{{ deployment.number }} {{ project.name }} — DeployPro{% endblock %}
+{% from "_macros.html" import status, shape, message, action, line, relationship, runtime, middle %}
+{% set d = deployment %}
+{% block title %}#{{ d.number }} {{ project.name }} — DeployPro{% endblock %}
+{% block head %}
+{#- Without JavaScript there is no live log to interrupt, so the page reloads
+    itself while the deployment is in progress. With JavaScript this never
+    fires: the stream updates the page in place (Phase 5 §3.3). #}
+{%- if v.in_progress %}
+<noscript><meta http-equiv="refresh" content="10"></noscript>
+{%- endif %}
+{% endblock %}
 {% block content %}
 
-<div class="breadcrumb">
-  <a href="/">Projects</a> /
-  <a href="/projects/{{ project.slug }}">{{ project.slug }}</a> /
-  #{{ deployment.number }}
-</div>
+<p class="crumbs"><a href="/projects/{{ project.slug }}">{{ project.name }}</a> › <a href="/projects/{{ project.slug }}/deployments">Deployments</a> › #{{ d.number }}</p>
+{{ message(ok, err) }}
 
-<div class="page-head">
-  <div>
-    <h1>
-      Deployment #{{ deployment.number }}
-      {{ status_pill(deployment.status.value) }}
-      {% if is_production %}<span class="pill pill-prod">production</span>{% endif %}
-    </h1>
-    <div class="row-sub">
-      <span class="mono">{{ deployment.git_sha[:12] }}</span>
-      <span class="faint">on</span> {{ deployment.git_ref }}
-      {% if deployment.git_message %}— {{ deployment.git_message }}{% endif %}
+<div class="dgrid">
+  <div class="dhead">
+    <div class="dhead-state">
+      <h1 class="dhead-number">#{{ d.number }}</h1>
+      <span id="dstatus" class="{% if v.in_progress %}live{% endif %}">{{ status(v.mark, 'status-lg') }}</span>
+      {{ relationship(v) }}
+      {% if v.runtime %}{{ runtime(v) }}{% endif %}
     </div>
+    <p class="dhead-identity">
+      <span class="mono">{{ d.git_sha[:8] }}</span>
+      <span class="branch mono">{{ d.git_ref }}</span>
+      <span class="muted">{{ d.trigger.value }}{% if d.git_author %} by {{ d.git_author }}{% endif %}</span>
+    </p>
+    {% if d.git_message %}<p class="dhead-message">{{ d.git_message }}</p>{% endif %}
+    <p class="dhead-ops">
+      <span>Created {{ d.created_at.strftime('%H:%M:%S') }} UTC{% if d.created_at.date() != now.date() %}, {{ d.created_at.strftime('%-d %b %Y') }}{% endif %}</span>
+      {% if v.took %}<span>took {{ v.took }}</span>{% endif %}
+      {% if v.in_progress and v.since %}<span>elapsed <span class="mono" id="delapsed" data-since="{{ v.since.isoformat() }}">{{ duration((now - v.since).total_seconds()) }}</span></span>{% endif %}
+      {% if actions.show_address %}<a class="link-out" href="{{ url }}" rel="noreferrer">{{ url | replace('https://', '') | replace('http://', '') }}{{ shape('external') }}</a>{% endif %}
+      <span id="dasof">as of {{ now.strftime('%H:%M') }} UTC</span>
+    </p>
   </div>
-  <div class="spacer"></div>
-  <div class="actions">
-    {% if deployment.status.value == 'ready' and not is_production %}
-      <form method="post" action="/deployments/{{ deployment.short_id }}/promote">
-        <button class="btn btn-primary" type="submit">
-          {% if is_older %}Roll back to this{% else %}Promote to production{% endif %}
-        </button>
-      </form>
-    {% endif %}
-    {% if deployment.status.is_terminal %}
-      <form method="post" action="/deployments/{{ deployment.short_id }}/redeploy">
-        <button class="btn" type="submit">Redeploy</button>
-      </form>
-    {% endif %}
-    {% if deployment.status.value == 'queued' %}
-      <form method="post" action="/deployments/{{ deployment.short_id }}/cancel">
-        <button class="btn btn-danger" type="submit">Cancel</button>
-      </form>
-    {% endif %}
+<div class="dline">
+  <div id="dline">{{ line(v.nodes) }}</div>
+  {% if d.status.value == 'failed' and d.error %}
+    <p class="error-text">{{ d.error }}</p>
+  {% endif %}
+  <p class="sentence" id="dsentence">
+    {%- if d.status.value == 'queued' -%}
+      Waiting for the build worker · {{ duration((now - d.created_at).total_seconds()) }}.
+      {% if waiting_behind %}One build runs at a time on this server, and {{ waiting_behind[0].name }} <a href="/deployments/{{ waiting_behind[1].short_id }}">#{{ waiting_behind[1].number }}</a> is building.{% endif %}
+    {%- else -%}{{ sentence }}{%- endif -%}
+  </p>
+  {% if not v.production_branch %}
+    <p class="sentence muted">Preview: its own address and preview variables; no production storage, workers or jobs.</p>
+  {% endif %}
+</div>
+  <div class="actions dactions">
+    {% if actions.primary %}{{ action(actions.primary, 'primary') }}{% endif %}
+    {% for a in actions.secondary %}{{ action(a, 'secondary') }}{% endfor %}
   </div>
 </div>
 
-{% if deployment.error %}
-  <div class="notice notice-bad">{{ deployment.error }}</div>
-{% endif %}
 
-<div class="card"><div class="card-body">
-  <dl class="kv">
-    <dt>URL</dt>
-    <dd>
-      {% if deployment.status.value == 'ready' %}
-        <a href="{{ url }}" rel="noreferrer">{{ url }}</a>
-        {% if not deployment.is_live %}
-          <span class="pill pill-plain">reclaimed — restarts on rollback</span>
-        {% endif %}
-      {% else %}
-        <span class="faint">{{ url }}</span>
-      {% endif %}
-    </dd>
-    <dt>Trigger</dt><dd>{{ deployment.trigger.value }}{% if deployment.git_author %} by {{ deployment.git_author }}{% endif %}</dd>
-    {% if deployment.framework %}<dt>Built as</dt><dd class="mono">{{ deployment.framework }}</dd>{% endif %}
-    {% if deployment.image_tag %}<dt>Image</dt><dd class="mono">{{ deployment.image_tag }}</dd>{% endif %}
-    <dt>Queued</dt><dd>{{ deployment.created_at.strftime('%d %b %Y, %H:%M:%S') }}</dd>
-    {% if duration %}<dt>Took</dt><dd>{{ duration }}</dd>{% endif %}
-  </dl>
-</div></div>
-
-<h2>Build log</h2>
-<div class="log" id="log" data-short-id="{{ deployment.short_id }}"
-     data-terminal="{{ 'true' if deployment.status.is_terminal else 'false' }}"
+<div class="log-head">
+  <h2>Build log</h2>
+  <span class="log-status" id="log-status">{% if d.status.is_terminal %}finished{% else %}live{% endif %}</span>
+</div>
+<div class="log" id="log" tabindex="0" aria-label="Build log"
+     data-short-id="{{ d.short_id }}"
+     data-status="{{ d.status.value }}"
+     data-terminal="{{ 'true' if d.status.is_terminal else 'false' }}"
      data-cursor="{{ cursor }}">
-{%- for line in logs -%}
-<span class="log-line log-{{ line.stream.value }}">{{ line.line }}</span>
+{%- for entry in logs -%}
+<span class="log-line log-{{ entry.stream.value }}">{{ entry.line }}</span>
 {%- else -%}
 <span class="log-line log-empty">Waiting for the worker to pick this up…</span>
 {%- endfor -%}
 </div>
-<div class="log-status" id="log-status">
-  {% if not deployment.status.is_terminal %}
-    <span class="pill pill-{{ deployment.status.value }}"><span class="dot"></span>{{ deployment.status.value }}</span>
-    streaming
-  {% else %}
-    finished — {{ deployment.status.value }}
-  {% endif %}
-</div>
+
+<details class="more">
+  <summary>Details</summary>
+  <dl class="facts">
+    <dt>Framework</dt><dd class="mono">{{ d.framework or 'not detected yet' }}</dd>
+    {% if d.image_tag %}<dt>Image</dt><dd class="mono">{{ d.image_tag }}</dd>{% endif %}
+    {% if d.internal_port %}<dt>Internal port</dt><dd class="mono">{{ d.internal_port }}</dd>{% endif %}
+    <dt>Container</dt><dd class="mono">{{ d.container_id[:12] if d.container_id else 'none' }}</dd>
+    <dt>Deployment</dt><dd class="mono">{{ d.short_id }}</dd>
+    <dt>Commit</dt><dd class="mono">{{ d.git_sha }}</dd>
+    <dt>Trigger</dt><dd>{{ d.trigger.value }}</dd>
+    <dt>Address</dt><dd class="mono">{{ url }}</dd>
+  </dl>
+</details>
+
+{% if v.in_progress %}
+{#- What the live script swaps in when the engine moves to the next state:
+    the same marks the server draws, so a state looks the same either way. #}
+<template id="tpl-status-building">{{ status({'shape': 'building', 'word': 'Building', 'tone': 'neutral'}, 'status-lg') }}</template>
+<template id="tpl-status-deploying">{{ status({'shape': 'deploying', 'word': 'Deploying', 'tone': 'neutral'}, 'status-lg') }}</template>
+<template id="tpl-mark-complete">{{ shape('complete') }}</template>
+<template id="tpl-mark-building">{{ shape('building') }}</template>
+<template id="tpl-mark-deploying">{{ shape('deploying') }}</template>
+{% endif %}
 {% endblock %}
 
-{% block scripts %}
-<script src="/static/deploypro.js" defer></script>
-{% endblock %}
+{% block scripts %}<script src="/static/deploypro.js" defer></script>{% endblock %}

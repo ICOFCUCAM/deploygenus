@@ -145,7 +145,7 @@ async def disconnect(request: Request):
     signed_in(request)
     await github.disconnect()
     return _redirect(
-        "/projects/new",
+        "/system",
         ok="Disconnected. Delete the app on GitHub too (Settings → Developer "
         "settings → GitHub Apps) so it stops sending events.",
     )
@@ -214,13 +214,13 @@ async def import_repository(
 async def link_project(request: Request, slug: str, settings: SettingsDep):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
+    page = f"/projects/{slug}/config/repository"
     try:
         project = await github.link(project, settings)
     except DeployProError as exc:
-        return _redirect(f"/projects/{slug}", err=exc.message)
+        return _redirect(page, err=exc.message)
     return _redirect(
-        f"/projects/{slug}",
-        ok=f"Linked to {project.github_repo} — every push now deploys by itself.",
+        page, ok=f"Linked to {project.github_repo}. Every push now deploys by itself."
     )
 
 
@@ -230,7 +230,7 @@ async def unlink_project(request: Request, slug: str):
     project = await project_repo.get_by_slug(slug)
     await github_repo.unlink_project(project.id)
     return _redirect(
-        f"/projects/{slug}",
+        f"/projects/{slug}/config/repository",
         ok="Unlinked from the GitHub App. Pushes no longer deploy this project.",
     )
 

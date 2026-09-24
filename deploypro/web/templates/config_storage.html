@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import message, confirm %}
+{% block title %}Storage — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Storage</h1>
+    <p class="head-sub">Persistent data. Files here survive every deploy and are shared by production, its workers and its jobs; previews never see them.</p>
+  </div>
+</div>
+{{ message(ok, err) }}
+
+{% if volumes %}
+<ul class="rows" aria-label="Mounts">
+  {% for volume, docker_name in volumes %}
+  <li class="item">
+    <span class="item-name mono">{{ volume.mount_path }}</span>
+    <div class="item-body">
+      <span>{{ volume.name }} <span class="muted">· Docker volume <span class="mono">{{ docker_name }}</span></span></span>
+      <span class="muted">{{ 'Included in the daily backup at %02d:00 UTC.' % backup_hour if backups else 'Backups are off.' }}</span>
+    </div>
+    <div class="item-actions">
+      {{ confirm('Remove', '/projects/' ~ project.slug ~ '/volumes/' ~ volume.name ~ '/delete', 'The next deployment won’t mount it. The files stay on the server.', 'Remove ' ~ volume.mount_path) }}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty"><p>No persistent storage. Without a mount, anything the app writes is lost on the next deploy.</p></div>
+{% endif %}
+
+<section class="section" aria-labelledby="add">
+  <h2 id="add">Add mount</h2>
+  <form class="form" method="post" action="/projects/{{ project.slug }}/volumes" style="margin-top:16px">
+    <div class="fields-2">
+      <div class="field">
+        <label for="v_name">Name</label>
+        <input type="text" id="v_name" name="name" placeholder="recordings" required>
+      </div>
+      <div class="field">
+        <label for="v_path">Mount path</label>
+        <input class="mono-input" type="text" id="v_path" name="mount_path" placeholder="/data" required aria-describedby="v_path_hint">
+        <p class="hint" id="v_path_hint">An absolute path inside the container.</p>
+      </div>
+    </div>
+    <div><button class="btn btn-primary" type="submit">Add mount</button></div>
+  </form>
+</section>
+{% endblock %}

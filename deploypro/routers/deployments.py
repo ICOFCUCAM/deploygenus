@@ -82,18 +82,27 @@ async def get_logs(short_id: str, after: int = 0, limit: int = 2000) -> list[Log
 
 
 @router.get("/{short_id}/logs/stream")
-async def stream_logs(short_id: str, after: int = 0) -> StreamingResponse:
+async def stream_logs(short_id: str, after: int = 0, seen: str = "") -> StreamingResponse:
     """Server-sent events, so a deploy can be watched as it happens.
+
+    Two kinds of event on one connection: every new log line, and a `state`
+    event whenever the deployment's status moves on, so the page's header and
+    deployment line keep up without reloading and restarting the log. `seen`
+    is the status the page was rendered with; a change that happened between
+    the render and this connection opening is sent straight away.
 
     Polling the table rather than listening on a Postgres channel: the writer
     batches its inserts anyway, so a notification would arrive in the same
     bursts this poll finds, for the cost of a dedicated connection per viewer.
+    The status comes from the same row this loop already reads to know when
+    to stop, so the state event costs nothing extra.
     """
     deployment = await deployment_repo.get_by_short_id(short_id)
 
     async def events() -> AsyncIterator[str]:
         cursor = after
         idle = 0
+        sent = seen or deployment.status.value
         while True:
             lines = await deployment_repo.read_logs(deployment.id, after=cursor)
             for line in lines:
@@ -109,6 +118,9 @@ async def stream_logs(short_id: str, after: int = 0) -> StreamingResponse:
                 yield f"data: {payload}\n\n"
 
             current = await deployment_repo.get(deployment.id)
+            if current.status.value != sent:
+                sent = current.status.value
+                yield f"event: state\ndata: {json.dumps(_state(current))}\n\n"
             if current.status.is_terminal:
                 idle = 0 if lines else idle + 1
                 if idle >= STREAM_IDLE_LIMIT:
@@ -124,6 +136,23 @@ async def stream_logs(short_id: str, after: int = 0) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _state(deployment: Deployment) -> dict:
+    """What the page needs to redraw its header and line: the status and the
+    timestamps the engine has recorded so far."""
+
+    def stamp(value):
+        return value.isoformat() if value else None
+
+    return {
+        "status": deployment.status.value,
+        "created_at": stamp(deployment.created_at),
+        "started_at": stamp(deployment.started_at),
+        "built_at": stamp(deployment.built_at),
+        "ready_at": stamp(deployment.ready_at),
+        "finished_at": stamp(deployment.finished_at),
+    }
 
 
 @router.post("/{short_id}/promote")

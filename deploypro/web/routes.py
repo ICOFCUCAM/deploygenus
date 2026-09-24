@@ -9,7 +9,6 @@ page is complete without it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -24,48 +23,45 @@ from deploypro.config import Settings, get_settings
 from deploypro.deps import SettingsDep, token_matches
 from deploypro.domain import naming, session
 from deploypro.domain.errors import DeployProError
-from deploypro.domain.github import repo_from_url
 from deploypro.domain.models import (
     Deployment,
+    DeploymentStatus,
     Domain,
     EnvTarget,
     EnvVar,
     ProcessType,
     Project,
 )
-from deploypro.domain.repo_url import is_ssh_url, validate_repo_url
+from deploypro.domain.repo_url import validate_repo_url
 from deploypro.domain.schedule import InvalidSchedule, describe, parse
 from deploypro.domain.storage import (
     docker_volume_name,
     normalise_mount_path,
     validate_volume_name,
 )
-from deploypro.engine import processes as process_engine
 from deploypro.engine import promote as promote_engine
 from deploypro.engine import routing, service, verify
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
-from deploypro.repositories import github as github_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
 from deploypro.repositories import volumes as volume_repo
+from deploypro.web import views
 
 HERE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
+templates.env.globals.update(
+    split_label=views.split_label,
+    clock=views.clock,
+    duration=views.duration,
+    ago=views.ago,
+)
 
 router = APIRouter(include_in_schema=False)
 
 
 class NeedsLogin(Exception):
     """Raised instead of 401 so a browser gets the sign-in page, not JSON."""
-
-
-@dataclass(frozen=True, slots=True)
-class ProjectSummary:
-    project: Project
-    live: Deployment | None
-    live_url: str
-    primary_domain: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -147,17 +143,6 @@ async def logout():
 # ---------------------------------------------------------------------------
 
 
-@router.get("/", response_class=HTMLResponse)
-async def index(request: Request, settings: SettingsDep, ok: str = "", err: str = ""):
-    signed_in(request)
-    summaries = []
-    for project in await project_repo.list_all():
-        summaries.append(await _summarise(project, settings))
-    return _render(
-        request, "projects.html", {"projects": summaries, "ok": ok, "err": err}
-    )
-
-
 @router.get("/projects/new", response_class=HTMLResponse)
 async def new_project_form(
     request: Request, settings: SettingsDep, q: str = "", ok: str = "", err: str = ""
@@ -200,55 +185,14 @@ async def create_project(
     return _redirect(f"/projects/{project.slug}", ok=f"Created {project.name}.{linked}")
 
 
-@router.get("/projects/{slug}", response_class=HTMLResponse)
-async def project_page(
-    request: Request, slug: str, settings: SettingsDep, ok: str = "", err: str = ""
-):
-    signed_in(request)
-    project = await project_repo.get_by_slug(slug)
-    summary = await _summarise(project, settings)
-    domains = await project_repo.list_domains(project.id)
-
-    return _render(
-        request,
-        "project.html",
-        {
-            "project": project,
-            "live": summary.live,
-            "live_url": summary.live_url,
-            "primary_domain": summary.primary_domain,
-            "deployments": await deployment_repo.list_for_project(project.id, limit=25),
-            "env_vars": await project_repo.list_env(project.id),
-            "processes": [
-                await _decorate(process)
-                for process in await process_repo.list_for_project(project.id)
-            ],
-            "domains": domains,
-            "volumes": [
-                (volume, docker_volume_name(project.slug, volume.name))
-                for volume in await volume_repo.list_for_project(project.id)
-            ],
-            "deploy_domain": settings.deploy_domain,
-            "repo_is_ssh": is_ssh_url(project.repo_url),
-            "github_app": await github_repo.get_app(),
-            "repo_on_github": bool(
-                repo_from_url(project.repo_url, github_url=settings.github_url)
-            ),
-            "webhook_url": f"{settings.dashboard_url}/webhooks/{project.slug}",
-            "ok": ok,
-            "err": err,
-        },
-    )
-
-
 @router.post("/projects/{slug}/deploy")
-async def trigger_deploy(request: Request, slug: str):
+async def trigger_deploy(request: Request, slug: str, back: Annotated[str, Form()] = ""):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
     try:
         deployment = await service.queue_deploy(project)
     except DeployProError as exc:
-        return _redirect(f"/projects/{slug}", err=exc.message)
+        return _redirect(_back(back, f"/projects/{slug}"), err=exc.message)
     return _redirect(f"/deployments/{deployment.short_id}")
 
 
@@ -269,62 +213,107 @@ async def make_deploy_key(
         if rotate
         else ("Deploy key made — add it to the repository on GitHub.")
     )
-    return _redirect(f"/projects/{slug}", ok=message)
+    return _redirect(f"/projects/{slug}/config/repository", ok=message)
 
 
-@router.post("/projects/{slug}/settings")
-async def save_settings(
+@router.post("/projects/{slug}/config/build")
+async def save_build(
     request: Request,
     slug: str,
-    name: Annotated[str, Form()] = "",
-    production_branch: Annotated[str, Form()] = "",
     root_directory: Annotated[str, Form()] = "",
     framework: Annotated[str, Form()] = "",
+    install_command: Annotated[str, Form()] = "",
     build_command: Annotated[str, Form()] = "",
     start_command: Annotated[str, Form()] = "",
+    port: Annotated[str, Form()] = "",
     memory_mb: Annotated[str, Form()] = "",
+    cpu_shares: Annotated[str, Form()] = "",
     keep_warm: Annotated[str, Form()] = "",
     stop_timeout_seconds: Annotated[str, Form()] = "",
 ):
+    """Configuration → Build. Every field on the page, and only those.
+
+    The Repository page has its own handler: a form that does not carry a
+    field must never be read as "clear it", which is what one shared handler
+    did to the build overrides whenever a form without them was posted.
+    """
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
+    back = f"/projects/{slug}/config/build"
+    try:
+        parsed_port = _optional_port(port)
+        parsed_cpu = _cpu(cpu_shares, project.cpu_shares)
+    except ValueError as exc:
+        return _redirect(back, err=str(exc))
     changes: dict = {
-        "name": name.strip() or project.name,
-        "production_branch": production_branch.strip() or project.production_branch,
         "root_directory": root_directory.strip(),
-        "memory_mb": _int(memory_mb, project.memory_mb),
-        "keep_warm": _int(keep_warm, project.keep_warm),
+        "port": parsed_port,
+        "memory_mb": max(_int(memory_mb, project.memory_mb), 64),
+        "cpu_shares": parsed_cpu,
+        "keep_warm": max(_int(keep_warm, project.keep_warm), 0),
         "stop_timeout_seconds": min(
             max(_int(stop_timeout_seconds, project.stop_timeout_seconds), 1), 86400
         ),
     }
     # An empty override means "go back to detecting it", which is a real
-    # setting and not a missing field — so these are written as NULL rather
-    # than skipped the way the blank-but-required fields above are.
-    for field, value in (
+    # setting and not a missing field — so these are written as NULL.
+    for field_name, value in (
         ("framework", framework),
+        ("install_command", install_command),
         ("build_command", build_command),
         ("start_command", start_command),
     ):
-        changes[field] = value.strip() or None
+        changes[field_name] = value.strip() or None
 
     await project_repo.update(project.id, changes)
     return _redirect(
-        f"/projects/{slug}", ok="Settings saved — they apply to the next deploy."
+        back,
+        ok="Saved. Build settings and resources apply to the next deploy; the "
+        "graceful shutdown time to the next replacement.",
+    )
+
+
+@router.post("/projects/{slug}/config/repository")
+async def save_repository(
+    request: Request,
+    slug: str,
+    name: Annotated[str, Form()] = "",
+    production_branch: Annotated[str, Form()] = "",
+):
+    """Configuration → Repository: the project's name and production branch."""
+    signed_in(request)
+    project = await project_repo.get_by_slug(slug)
+    await project_repo.update(
+        project.id,
+        {
+            "name": name.strip() or project.name,
+            "production_branch": production_branch.strip() or project.production_branch,
+        },
+    )
+    return _redirect(
+        f"/projects/{slug}/config/repository",
+        ok="Saved. The production branch applies to the next push or deploy.",
     )
 
 
 @router.post("/projects/{slug}/delete")
-async def delete_project(request: Request, slug: str, settings: SettingsDep):
+async def delete_project(
+    request: Request,
+    slug: str,
+    settings: SettingsDep,
+    confirm: Annotated[str, Form()] = "",
+):
+    """Deleting needs the project's name typed (Phase 3 Q-S5): it cannot be
+    undone, and a stray click on a button must not be enough."""
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
+    if confirm.strip() != project.name:
+        return _redirect(
+            f"/projects/{slug}/config",
+            err=f"Type the project name, {project.name}, exactly to delete it.",
+        )
     await service.delete_project(project, settings)
-    return _redirect("/", ok=f"Deleted {project.name}.")
-
-
-# ---------------------------------------------------------------------------
-# Environment variables and domains
-# ---------------------------------------------------------------------------
+    return _redirect("/", ok=f"Deleted {project.name}. Its files are kept.")
 
 
 @router.post("/projects/{slug}/env")
@@ -341,7 +330,7 @@ async def add_env(
     cleaned = key.strip()
     if not cleaned.replace("_", "").isalnum() or cleaned[:1].isdigit():
         return _redirect(
-            f"/projects/{slug}",
+            f"/projects/{slug}/config/environment",
             err=f"{cleaned!r} is not a usable variable name.",
         )
     await project_repo.set_env(
@@ -351,7 +340,8 @@ async def add_env(
         EnvTarget(target),
     )
     return _redirect(
-        f"/projects/{slug}", ok=f"Saved {cleaned} — it applies on the next deploy."
+        f"/projects/{slug}/config/environment",
+        ok=f"Saved {cleaned}. It applies on the next deploy.",
     )
 
 
@@ -360,7 +350,10 @@ async def remove_env(request: Request, slug: str, key: str):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
     await project_repo.delete_env(project.id, key, None)
-    return _redirect(f"/projects/{slug}", ok=f"Removed {key}.")
+    return _redirect(
+        f"/projects/{slug}/config/environment",
+        ok=f"Removed {key}. Redeploy to apply.",
+    )
 
 
 @router.post("/projects/{slug}/domains")
@@ -375,10 +368,12 @@ async def add_domain(
     project = await project_repo.get_by_slug(slug)
     cleaned = host.strip().lower().rstrip(".")
     if "." not in cleaned or "/" in cleaned:
-        return _redirect(f"/projects/{slug}", err=f"{host!r} is not a hostname.")
+        return _redirect(
+            f"/projects/{slug}/config/domains", err=f"{host!r} is not a hostname."
+        )
     if cleaned.endswith(settings.deploy_domain):
         return _redirect(
-            f"/projects/{slug}",
+            f"/projects/{slug}/config/domains",
             err=(
                 f"{cleaned} is under the platform's own domain, which every "
                 "deployment already uses."
@@ -387,9 +382,9 @@ async def add_domain(
     try:
         await project_repo.add_domain(project.id, cleaned, primary=bool(primary))
     except DeployProError as exc:
-        return _redirect(f"/projects/{slug}", err=exc.message)
+        return _redirect(f"/projects/{slug}/config/domains", err=exc.message)
     return _redirect(
-        f"/projects/{slug}",
+        f"/projects/{slug}/config/domains",
         ok=f"Added {cleaned}. Point its DNS here, then verify it.",
     )
 
@@ -410,9 +405,9 @@ async def add_volume(
             mount_path=normalise_mount_path(mount_path),
         )
     except DeployProError as exc:
-        return _redirect(f"/projects/{slug}", err=exc.message)
+        return _redirect(f"/projects/{slug}/config/storage", err=exc.message)
     return _redirect(
-        f"/projects/{slug}",
+        f"/projects/{slug}/config/storage",
         ok=f"Added {volume.name} at {volume.mount_path}. It is mounted from the "
         "next deploy.",
     )
@@ -425,9 +420,9 @@ async def remove_volume(request: Request, slug: str, name: str):
     try:
         volume = await volume_repo.delete(project.id, name)
     except DeployProError as exc:
-        return _redirect(f"/projects/{slug}", err=exc.message)
+        return _redirect(f"/projects/{slug}/config/storage", err=exc.message)
     return _redirect(
-        f"/projects/{slug}",
+        f"/projects/{slug}/config/storage",
         ok=f"{volume.name} is no longer mounted from the next deploy. Its data is "
         f"kept in Docker volume {docker_volume_name(project.slug, volume.name)}.",
     )
@@ -440,15 +435,17 @@ async def verify_domain(request: Request, slug: str, host: str, settings: Settin
     domains = {d.host: d for d in await project_repo.list_domains(project.id)}
     domain = domains.get(host.lower())
     if domain is None:
-        return _redirect(f"/projects/{slug}", err=f"{host} is not on this project.")
+        return _redirect(
+            f"/projects/{slug}/config/domains", err=f"{host} is not on this project."
+        )
 
     result = await verify.verify(domain.host, expected_host=settings.deploy_domain)
     if not result.verified:
-        return _redirect(f"/projects/{slug}", err=result.detail)
+        return _redirect(f"/projects/{slug}/config/domains", err=result.detail)
 
     await project_repo.mark_domain_verified(domain.id)
     await routing.refresh(await project_repo.get(project.id), settings=settings)
-    return _redirect(f"/projects/{slug}", ok=result.detail)
+    return _redirect(f"/projects/{slug}/config/domains", ok=result.detail)
 
 
 @router.post("/projects/{slug}/domains/{host}/delete")
@@ -457,7 +454,7 @@ async def remove_domain(request: Request, slug: str, host: str, settings: Settin
     project = await project_repo.get_by_slug(slug)
     await project_repo.remove_domain(project.id, host)
     await routing.refresh(await project_repo.get(project.id), settings=settings)
-    return _redirect(f"/projects/{slug}", ok=f"Removed {host}.")
+    return _redirect(f"/projects/{slug}/config/domains", ok=f"Removed {host}.")
 
 
 # ---------------------------------------------------------------------------
@@ -480,13 +477,14 @@ async def add_process(
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
     kind = ProcessType(type)
+    back = _process_list(slug, kind)
 
     cleaned_schedule: str | None = None
     if kind is ProcessType.CRON:
         try:
             cleaned_schedule = parse(schedule).expression
         except InvalidSchedule as exc:
-            return _redirect(f"/projects/{slug}", err=str(exc))
+            return _redirect(back, err=str(exc))
 
     try:
         await process_repo.create(
@@ -500,44 +498,44 @@ async def add_process(
             timeout_seconds=_int(timeout_seconds, 900),
         )
     except DeployProError as exc:
-        return _redirect(f"/projects/{slug}", err=exc.message)
+        return _redirect(back, err=exc.message)
 
     note = (
-        "Scheduled jobs run against whatever is serving production."
+        "It runs against whatever is serving production, never a preview."
         if kind is ProcessType.CRON
-        else "Workers start on the next deploy or promotion."
+        else "It starts on the next deploy."
     )
-    return _redirect(f"/projects/{slug}", ok=f"Added {name}. {note}")
-
-
-@router.get("/projects/{slug}/processes/{name}", response_class=HTMLResponse)
-async def process_page(
-    request: Request, slug: str, name: str, ok: str = "", err: str = ""
-):
-    signed_in(request)
-    project = await project_repo.get_by_slug(slug)
-    process = await process_repo.get_by_name(project.id, name)
-    return _render(
-        request,
-        "process.html",
-        {
-            "project": project,
-            "process": await _decorate(process),
-            "runs": await process_repo.list_runs(process.id, limit=25),
-            "ok": ok,
-            "err": err,
-        },
-    )
+    return _redirect(back, ok=f"Added {name.strip()}. {note}")
 
 
 @router.post("/projects/{slug}/processes/{name}/toggle")
-async def toggle_process(request: Request, slug: str, name: str):
+async def toggle_process(
+    request: Request, slug: str, name: str, back: Annotated[str, Form()] = ""
+):
+    """Pause or resume.
+
+    For a job this is immediate: the scheduler reads only enabled jobs. For a
+    worker it is not: workers are reconciled when production changes, so the
+    message says the next deploy (Phase 3 Q-S4) rather than claiming a
+    running worker has stopped.
+    """
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
     process = await process_repo.get_by_name(project.id, name)
     await process_repo.update(process.id, {"enabled": not process.enabled})
-    state = "paused" if process.enabled else "resumed"
-    return _redirect(f"/projects/{slug}", ok=f"{name} {state}.")
+    if process.type is ProcessType.CRON:
+        message = (
+            f"{name} paused: no runs are scheduled."
+            if process.enabled
+            else f"{name} resumed."
+        )
+    else:
+        message = (
+            f"{name} pauses at the next deploy. It keeps running until then."
+            if process.enabled
+            else f"{name} resumes at the next deploy."
+        )
+    return _redirect(_back(back, _process_list(slug, process.type)), ok=message)
 
 
 @router.post("/projects/{slug}/processes/{name}/run")
@@ -545,9 +543,10 @@ async def run_process_now(request: Request, slug: str, name: str):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
     process = await process_repo.get_by_name(project.id, name)
+    page = f"/projects/{slug}/runtime/jobs/{name}"
     if process.type is not ProcessType.CRON:
         return _redirect(
-            f"/projects/{slug}/processes/{name}",
+            f"/projects/{slug}/runtime/workers/{name}",
             err=f"{name} runs continuously, so there is nothing to trigger.",
         )
 
@@ -558,13 +557,8 @@ async def run_process_now(request: Request, slug: str, name: str):
         process.id, slot, project.production_deployment_id
     )
     if run is None:
-        return _redirect(
-            f"/projects/{slug}/processes/{name}",
-            err="Already queued or running for this minute.",
-        )
-    return _redirect(
-        f"/projects/{slug}/processes/{name}", ok="Queued — it starts within seconds."
-    )
+        return _redirect(page, err="Already queued or running for this minute.")
+    return _redirect(page, ok="Queued. It starts within seconds.")
 
 
 @router.post("/projects/{slug}/processes/{name}/delete")
@@ -573,28 +567,21 @@ async def delete_process(request: Request, slug: str, name: str):
     project = await project_repo.get_by_slug(slug)
     process = await process_repo.get_by_name(project.id, name)
     await process_repo.delete(process.id)
-    return _redirect(f"/projects/{slug}", ok=f"Removed {name}.")
+    return _redirect(_process_list(slug, process.type), ok=f"Removed {name}.")
 
 
-async def _decorate(process):
-    """Attach the two derived things the templates want.
+def _process_list(slug: str, kind: ProcessType) -> str:
+    return f"/projects/{slug}/runtime/{'jobs' if kind is ProcessType.CRON else 'workers'}"
 
-    A dict rather than a richer model: these are presentation, and putting
-    "next run in four hours" on the domain object would make it depend on the
-    current time.
-    """
-    description = None
-    if process.runs_on_a_schedule:
-        try:
-            description = describe(parse(process.schedule))
-        except InvalidSchedule:
-            description = "unreadable schedule"
-    return {
-        "process": process,
-        "description": description,
-        "next_run_at": process_engine.next_due(process) if process.enabled else None,
-        "last_run": await process_repo.last_run(process.id),
-    }
+
+def describe_schedule(process) -> str | None:
+    """A job's schedule in words, or None for a worker."""
+    if not process.runs_on_a_schedule:
+        return None
+    try:
+        return describe(parse(process.schedule))
+    except InvalidSchedule:
+        return "unreadable schedule"
 
 
 # ---------------------------------------------------------------------------
@@ -602,46 +589,14 @@ async def _decorate(process):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/deployments/{short_id}", response_class=HTMLResponse)
-async def deployment_page(
-    request: Request,
-    short_id: str,
-    settings: SettingsDep,
-    ok: str = "",
-    err: str = "",
-):
-    signed_in(request)
-    deployment = await deployment_repo.get_by_short_id(short_id)
-    project = await project_repo.get(deployment.project_id)
-    logs = await deployment_repo.read_logs(deployment.id, limit=4000)
-
-    production = None
-    if project.production_deployment_id:
-        production = await deployment_repo.get(project.production_deployment_id)
-
-    return _render(
-        request,
-        "deployment.html",
-        {
-            "project": project,
-            "deployment": deployment,
-            "logs": logs,
-            "cursor": logs[-1].seq if logs else 0,
-            "url": settings.deployment_url(deployment.short_id),
-            "is_production": project.production_deployment_id == deployment.id,
-            "is_older": bool(production and deployment.number < production.number),
-            "duration": _duration(deployment),
-            "ok": ok,
-            "err": err,
-        },
-    )
-
-
 @router.post("/deployments/{short_id}/promote")
 async def promote(request: Request, short_id: str, settings: SettingsDep):
     signed_in(request)
     deployment = await deployment_repo.get_by_short_id(short_id)
     project = await project_repo.get(deployment.project_id)
+    previous = None
+    if project.production_deployment_id:
+        previous = await deployment_repo.get(project.production_deployment_id)
     log = await LogWriter.resume(deployment.id)
     try:
         await promote_engine.promote(
@@ -652,13 +607,21 @@ async def promote(request: Request, short_id: str, settings: SettingsDep):
             workdir=settings.build_root / deployment.short_id,
         )
     except DeployProError as exc:
-        return _redirect(f"/deployments/{short_id}", err=exc.message)
+        return _redirect(
+            f"/deployments/{short_id}", err=f"{exc.message} Production is unchanged."
+        )
     finally:
         await log.flush()
-    return _redirect(
-        f"/projects/{project.slug}",
-        ok=f"Production now serves #{deployment.number}.",
-    )
+    # Phase 3 §7: say where production is now, and that the way back is open.
+    message = f"Production is now #{deployment.number} ({deployment.git_sha[:8]})."
+    if previous is not None and previous.id != deployment.id:
+        previous = await deployment_repo.get(previous.id)
+        if previous.status is DeploymentStatus.READY:
+            direction = "forward" if previous.number > deployment.number else "back"
+            message += (
+                f" #{previous.number} is still available: roll {direction} any time."
+            )
+    return _redirect(f"/projects/{project.slug}", ok=message)
 
 
 @router.post("/deployments/{short_id}/redeploy")
@@ -666,7 +629,10 @@ async def redeploy(request: Request, short_id: str):
     signed_in(request)
     deployment = await deployment_repo.get_by_short_id(short_id)
     project = await project_repo.get(deployment.project_id)
-    queued = await service.redeploy(project, deployment)
+    try:
+        queued = await service.redeploy(project, deployment)
+    except DeployProError as exc:
+        return _redirect(f"/deployments/{short_id}", err=exc.message)
     return _redirect(f"/deployments/{queued.short_id}")
 
 
@@ -688,33 +654,43 @@ async def cancel(request: Request, short_id: str):
 # ---------------------------------------------------------------------------
 
 
-async def _summarise(project: Project, settings: Settings) -> ProjectSummary:
-    live = None
-    if project.production_deployment_id:
-        live = await deployment_repo.get(project.production_deployment_id)
-
-    # A verified domain is only the project's address once something is
-    # serving it. Showing it before the first deploy points at a hostname
-    # that answers with the router's default, which reads as "the site is
-    # broken" rather than "the site does not exist yet".
-    primary = None
-    if live is not None:
-        for domain in await project_repo.list_domains(project.id):
-            if domain.is_verified and (domain.is_primary or primary is None):
-                primary = domain.host
-                if domain.is_primary:
-                    break
-
-    return ProjectSummary(
-        project=project,
-        live=live,
-        live_url=settings.deployment_url(live.short_id) if live else "",
-        primary_domain=primary,
+def render(request: Request, template: str, context: dict, *, nav: bool = True):
+    now = datetime.now(UTC)
+    return templates.TemplateResponse(
+        request, template, {"show_nav": nav, "now": now, **context}
     )
 
 
-def _render(request: Request, template: str, context: dict, *, nav: bool = True):
-    return templates.TemplateResponse(request, template, {"show_nav": nav, **context})
+# The older name, still used by the GitHub pages.
+_render = render
+
+
+def _back(target: str, default: str) -> str:
+    """Where a form returns to: the page it was posted from, when it says so
+    and that page is on this dashboard, else the handler's own page."""
+    return safe_next(target) if target and safe_next(target) != "/" else default
+
+
+def _optional_port(raw: str) -> int | None:
+    cleaned = raw.strip()
+    if not cleaned:
+        return None
+    if not cleaned.isdigit() or not 0 < int(cleaned) < 65536:
+        raise ValueError(f"{cleaned!r} is not a port number (1–65535).")
+    return int(cleaned)
+
+
+def _cpu(raw: str, fallback: float) -> float:
+    cleaned = raw.strip()
+    if not cleaned:
+        return fallback
+    try:
+        value = float(cleaned)
+    except ValueError:
+        raise ValueError(f"{cleaned!r} is not a number of CPUs.") from None
+    if not 0 < value <= 99:
+        raise ValueError("CPU must be more than 0 and at most 99.")
+    return round(value, 2)
 
 
 def _redirect(path: str, *, ok: str = "", err: str = "") -> RedirectResponse:
@@ -736,15 +712,6 @@ def _int(raw: str, fallback: int) -> int:
         return int(str(raw).strip())
     except (TypeError, ValueError):
         return fallback
-
-
-def _duration(deployment: Deployment) -> str | None:
-    if not deployment.started_at or not deployment.finished_at:
-        return None
-    seconds = (deployment.finished_at - deployment.started_at).total_seconds()
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    return f"{int(seconds // 60)}m {int(seconds % 60):02d}s"
 
 
 # Re-exported for the type checker's benefit; the templates use them by name.

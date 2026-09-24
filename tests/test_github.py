@@ -331,7 +331,7 @@ class TestConnecting:
         response = await client.get("/projects/new")
         assert response.status_code == 200
         assert 'href="/github/connect"' in response.text
-        assert "Or deploy from any Git URL" in response.text
+        assert "Deploy from a Git URL" in response.text
 
     async def test_the_connect_page_posts_the_manifest_to_github_with_a_state(
         self, client, repos
@@ -480,13 +480,13 @@ class TestImporting:
             github_repo="you/blog",
             github_installation_id=42,
         )
-        response = await client.get("/projects/blog")
+        response = await client.get("/projects/blog/config/repository")
         assert "through the GitHub App" in response.text
         # Its own webhook and deploy key are beside the point now.
         assert "Make a deploy key" not in response.text
 
     async def test_an_unlinked_github_project_offers_to_link(self, client, connected):
-        response = await client.get("/projects/blog")
+        response = await client.get("/projects/blog/config/repository")
         assert "/projects/blog/github/link" in response.text
 
 
@@ -505,8 +505,19 @@ class TestPageTitle:
         monkeypatch.setattr(engine, "list_repositories", lambda settings: _async([]))
         response = await client.get("/projects/new")
         assert self.title(response.text) == "New project — DeployPro"
-        # The card itself still renders once, in the page.
-        assert response.text.count("Disconnect</button>") == 1
+        # The app's name still renders, in the page.
+        assert response.text.count("<title>") == 1
+        assert "Choose some on GitHub" in response.text
+
+    async def test_disconnect_lives_on_system_settings(
+        self, client, connected, monkeypatch
+    ):
+        """Phase 2 decision 1: disconnecting is an installation-wide act."""
+        monkeypatch.setattr(engine, "list_repositories", lambda settings: _async([]))
+        new_project = (await client.get("/projects/new")).text
+        assert "/github/disconnect" not in new_project
+        system = (await client.get("/system")).text
+        assert system.count("Disconnect</button>") == 1
 
     async def test_the_title_is_plain_text_without_an_app(self, client, repos):
         response = await client.get("/projects/new")

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import message, confirm, status %}
+{% block title %}Domains — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Domains</h1>
+    <p class="head-sub">Where {{ project.name }} is reachable. Other domains redirect permanently to the primary, so two hostnames never serve the same pages.</p>
+  </div>
+</div>
+{{ message(ok, err) }}
+
+{% if domains %}
+<ul class="rows" aria-label="Domains">
+  {% for d, mark in domains %}
+  <li class="item">
+    <span class="item-name mono">{{ d.host }}</span>
+    <div class="item-body">
+      <span>{{ status(mark) }}{% if d.is_primary %} <span class="muted small">primary</span>{% endif %}</span>
+      {% if not d.is_verified %}
+        <span class="muted">Add a CNAME record for <span class="mono">{{ d.host }}</span> pointing to <span class="mono">{{ deploy_domain }}</span>, or an A record to this server’s address, then verify.</span>
+      {% endif %}
+    </div>
+    <div class="item-actions">
+      {% if not d.is_verified %}
+      <form method="post" action="/projects/{{ project.slug }}/domains/{{ d.host }}/verify">
+        <button class="btn btn-small" type="submit">Verify</button>
+      </form>
+      {% endif %}
+      {{ confirm('Remove', '/projects/' ~ project.slug ~ '/domains/' ~ d.host ~ '/delete', d.host ~ ' stops serving immediately.', 'Remove ' ~ d.host) }}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty"><p>No custom domain. Production has no permanent address until one is added and verified.</p></div>
+{% endif %}
+
+<section class="section" aria-labelledby="add">
+  <h2 id="add">Add domain</h2>
+  <form class="form" method="post" action="/projects/{{ project.slug }}/domains" style="margin-top:16px">
+    <div class="field">
+      <label for="host">Hostname</label>
+      <input class="mono-input" type="text" id="host" name="host" placeholder="example.com" required>
+    </div>
+    <label class="check"><input type="checkbox" name="primary" value="1"> Make it the primary domain</label>
+    <div><button class="btn btn-primary" type="submit">Add domain</button></div>
+  </form>
+</section>
+{% endblock %}

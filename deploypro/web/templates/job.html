@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, message, confirm %}
+{% block title %}{{ p.name }} — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<p class="crumbs"><a href="/projects/{{ project.slug }}/runtime/jobs">Jobs</a> › {{ p.name }}</p>
+<div class="head">
+  <div class="head-main">
+    <h1 class="mono">{{ p.name }}</h1>
+    <p class="head-sub">
+      {% if mark %}{{ status(mark) }}<span class="sep"></span>{% endif %}
+      {{ description or p.schedule }} <span class="mono">{{ p.schedule }}</span>
+      {% if next_run %}<span class="sep">·</span>next run {{ clock(next_run, now) }} UTC{% elif not p.enabled %}<span class="sep">·</span>No runs are scheduled.{% endif %}
+    </p>
+  </div>
+  <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+</div>
+{{ message(ok, err) }}
+
+<div class="actions">
+  {% if p.enabled %}
+  <form method="post" action="/projects/{{ project.slug }}/processes/{{ p.name }}/run">
+    <button class="btn btn-primary" type="submit">Run now</button>
+  </form>
+  {% endif %}
+  <form method="post" action="/projects/{{ project.slug }}/processes/{{ p.name }}/toggle">
+    <input type="hidden" name="back" value="{{ request.url.path }}">
+    <button class="btn {{ 'btn-primary' if not p.enabled else 'btn-secondary' }}" type="submit">{{ 'Resume' if not p.enabled else 'Pause' }}</button>
+  </form>
+</div>
+
+<section class="section" aria-labelledby="runs">
+  <h2 id="runs">Runs</h2>
+  {% if runs %}
+  <ul class="rows">
+    {% for run in runs %}
+    <li class="item">
+      <div class="mono">{{ run.scheduled_for.strftime('%-d %b %H:%M') }}</div>
+      <div class="item-body">
+        <span class="{% if run.status.value == 'running' %}live{% endif %}">{{ status(run_marks[run.status]) }}
+          <span class="muted">
+            {%- if run.status.value == 'timed_out' %} after {{ p.timeout_seconds }} s
+            {%- elif run.duration_seconds is not none %} {{ duration(run.duration_seconds) }}{% endif %}
+            {%- if run.exit_code is not none and run.exit_code != 0 %} · exit {{ run.exit_code }}{% endif %}
+            {%- if run.status.value == 'skipped' %} · nothing was in production{% endif %}
+            {%- if run.status.value == 'pending' %} · waiting to start{% endif %}</span></span>
+        {% if run.detail %}<span>{{ run.detail }}</span>{% endif %}
+        {% if run.output %}
+        <details>
+          <summary class="small">Output</summary>
+          <div class="log" style="margin-top:8px;max-height:320px">{{ run.output }}</div>
+        </details>
+        {% endif %}
+      </div>
+      <span></span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="section-lead">This job has not run yet.{% if next_run %} First run {{ clock(next_run, now) }} UTC.{% endif %}</p>
+  {% endif %}
+</section>
+
+<section class="section" aria-labelledby="definition">
+  <h2 id="definition">Definition</h2>
+  <dl class="facts" style="margin-top:12px">
+    <dt>Command</dt><dd class="mono">{{ p.command or "the image's own command" }}</dd>
+    <dt>Timeout</dt><dd>{{ p.timeout_seconds }} s</dd>
+    <dt>Memory</dt><dd>{{ p.memory_mb }} MB</dd>
+    <dt>Runs</dt><dd>the production deployment's image, never a preview</dd>
+  </dl>
+</section>
+
+<div class="danger-zone">
+  <h2>Remove job</h2>
+  {{ confirm('Remove ' ~ p.name, '/projects/' ~ project.slug ~ '/processes/' ~ p.name ~ '/delete', 'This can’t be undone. Its run history is deleted.') }}
+</div>
+{% endblock %}

@@ -43,7 +43,7 @@ It makes 110 checks in about four minutes. The first 79 passed ten runs in a
 row. Its runs have found five bugs that would have hit real installations.
 All five are fixed.
 
-366 unit tests cover everything that does not need a daemon. What is still
+482 unit tests cover everything that does not need a daemon. What is still
 unproven, chiefly HTTPS and DeployPro's own container image, is listed under
 [What is proven and what is not](#what-is-proven-and-what-is-not).
 
@@ -51,7 +51,9 @@ The dashboard is server-rendered from the control plane itself — no build
 step, no separate deployment, and every action on it is a plain form that
 works without JavaScript. That is deliberate: it is the page you open when a
 deploy has gone wrong, so it must not depend on anything that could be wrong
-at the same time.
+at the same time. Its design (information architecture, states, the visual
+system and page layouts) is specified in [`docs/design/`](docs/design/), and
+the pages implement those documents.
 
 ## What it does
 
@@ -64,7 +66,7 @@ at the same time.
 | **Encrypted environment variables** | Fernet at rest, scoped to production or preview, never readable back through the API |
 | **Custom domains with automatic TLS** | With a canonical redirect from every alias to the primary |
 | **Preview deploys** | Any non-production branch gets a URL and is kept away from production secrets |
-| **A dashboard** | Projects, deployments, live build logs, variables, domains and one-click rollback |
+| **A dashboard** | Projects, deployments with a live build log and lifecycle, runtime, configuration and one-click rollback |
 | **Background workers** | Long-running processes from the same image as the site — queue consumers, listeners |
 | **Scheduled jobs** | Five-field cron in UTC, with run history, captured output and catch-up after downtime |
 | **Persistent volumes** | Storage that survives every deploy, shared by production, its workers and its jobs |
@@ -237,7 +239,7 @@ Then deploy on every push:
 deploypro webhook blog      # prints the payload URL and the secret
 ```
 
-The same thing is on the project page in the dashboard, at
+The same thing is on the project's **Configuration → Repository** page in the dashboard, at
 `https://deploypro.deploys.example.com` — sign in with `DEPLOYPRO_API_TOKEN` and the
 browser holds a signed cookie derived from it, so there is still only one
 credential to keep.
@@ -304,8 +306,8 @@ deploypro project key balancevid      # prints the public key
 ```
 
 On GitHub, open the repository, then **Settings → Deploy keys → Add deploy
-key**. Paste the key and leave **Allow write access off**. The project page in
-the dashboard shows the same key, with a button to make or replace it.
+key**. Paste the key and leave **Allow write access off**. The project's
+**Configuration → Repository** page shows the same key, with a button to make or replace it.
 
 - **It reads one repository, and nothing else.** If it leaked, it could not
   push, and it could not reach your other repositories. It never expires and
@@ -757,7 +759,8 @@ deploypro/
   engine/        the pipeline, promotion, health, environment, routing,
                  processes and the schedule sweep
   routers/       HTTP (the JSON API)
-  web/           the dashboard: routes, templates, one stylesheet, one script
+  web/           the dashboard: pages, form handlers, derived states (views.py),
+                 templates, one stylesheet, one script, self-hosted fonts
   worker.py      the deploy loop
   cli.py         the operator's tool
 db/migrations/   schema

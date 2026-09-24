@@ -1,48 +1,91 @@
 {% extends "base.html" %}
-{% from "_macros.html" import status_pill %}
+{% from "_macros.html" import status, shape, message, middle %}
 {% block title %}Projects — DeployPro{% endblock %}
 {% block content %}
 
-<div class="page-head">
-  <h1>Projects</h1>
-  <div class="spacer"></div>
+<div class="head">
+  <div class="head-main">
+    <h1>Projects</h1>
+  </div>
+  <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+</div>
+{% if records %}
+<div class="actions" style="margin-bottom:24px">
   <a class="btn btn-primary" href="/projects/new">New project</a>
 </div>
+{% endif %}
+{{ message(ok, err) }}
 
-{% if not projects %}
-  <div class="card"><div class="empty">
+{% if not records %}
+  <div class="empty">
     <p>Nothing is deployed here yet.</p>
-    <a class="btn btn-primary" href="/projects/new">Create your first project</a>
-  </div></div>
-{% else %}
-  <div class="card rows">
-  {% for item in projects %}
-    <a class="row" href="/projects/{{ item.project.slug }}">
-      <div class="row-main">
-        <div class="row-title">
-          {{ item.project.name }}
-          {% if item.live %}{{ status_pill(item.live.status.value) }}{% endif %}
-        </div>
-        <div class="row-sub">
-          {% if item.primary_domain %}
-            {{ item.primary_domain }}
-          {% elif item.live %}
-            {{ item.live_url }}
-          {% else %}
-            <span class="faint">not deployed yet</span>
-          {% endif %}
-        </div>
+    {% if github_app %}
+      <a class="btn btn-primary" href="/projects/new">Import a repository</a>
+    {% else %}
+      <div class="actions" style="align-items:center">
+        <a class="btn btn-primary" href="/github/connect">Connect GitHub</a>
+        <a href="/projects/new#from-url">or deploy from a Git URL</a>
       </div>
-      <div class="row-aside">
-        {% if item.live %}
-          <span class="mono">{{ item.live.git_sha[:8] }}</span><br>
-          {{ item.live.ready_at.strftime('%d %b %H:%M') if item.live.ready_at else '' }}
+    {% endif %}
+  </div>
+{% else %}
+  <ul class="rows" aria-label="Projects">
+  {% for r in records %}
+    {% set project = r.project %}
+    <li class="record">
+      <div class="record-state">{{ status(r.mark) }}</div>
+      <div><a class="record-name" href="/projects/{{ project.slug }}">{{ project.name }}</a></div>
+      <div class="record-address">
+        {% if r.address %}
+          <a class="link-out" href="https://{{ r.address }}" rel="noreferrer">{{ r.address }}{{ shape('external') }}</a>
         {% else %}
-          <span class="faint">—</span>
+          <span class="muted">No permanent address — add a domain</span>
         {% endif %}
       </div>
-    </a>
+      <div class="record-lines">
+        {% if r.reason %}
+          <p class="tone-{{ r.reason.mark.tone }}" style="display:flex;gap:8px;align-items:center">{{ shape(r.reason.mark.shape) }}<a href="{{ r.reason.url }}" style="color:var(--text)">{{ r.reason.text }}</a></p>
+        {% endif %}
+        {% if r.production %}
+          {% set d = r.production %}
+          <p>Production #{{ d.number }} · <span class="mono">{{ d.git_sha[:8] }}</span> · <span class="branch">{{ d.git_ref }}</span> · {{ ago(d.ready_at or d.created_at, now) }}</p>
+        {% else %}
+          <p class="line-muted">Not deployed yet</p>
+        {% endif %}
+        {% if r.latest %}
+          {% set v = r.latest %}
+          <p>{{ status(v.mark) }}
+            <a href="/deployments/{{ v.d.short_id }}">#{{ v.d.number }}</a>
+            {% if v.in_progress %}· elapsed {{ duration((now - v.since).total_seconds()) if v.since else '' }}
+            {% elif v.d.status.value == 'failed' %}· {{ ago(v.d.finished_at, now) }}{% if v.d.error %} — {{ v.d.error.splitlines()[0] }}{% endif %}
+            {% endif %}</p>
+        {% endif %}
+        <p class="line-muted">
+          {{ r.workers }} worker{{ '' if r.workers == 1 else 's' }}
+          ·
+          {{ r.jobs }}
+        </p>
+        {% for d in r.waiting_domains %}
+          <p>{{ status({'shape': 'caution', 'word': d.host ~ ' waiting for DNS', 'tone': 'caution'}) }}</p>
+        {% endfor %}
+      </div>
+    </li>
   {% endfor %}
-  </div>
+  </ul>
+
+  {% if activity %}
+  <section class="section" aria-labelledby="activity">
+    <h2 id="activity">Activity</h2>
+    <ul class="events">
+      {% for e in activity %}
+      <li>
+        <time datetime="{{ e.at.isoformat() }}">{{ clock(e.at, now) }}</time>
+        <span class="event-project">{{ e.project.name }}</span>
+        <span>{{ status(e.mark) }} <a href="{{ e.url }}">{{ e.text }}</a></span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
 {% endif %}
 {% endblock %}

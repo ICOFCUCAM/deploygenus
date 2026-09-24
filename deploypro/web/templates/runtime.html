@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status %}
+{% block title %}Runtime — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Runtime</h1>
+    <p class="head-sub">What is running for {{ project.name }}: the website, its workers and its scheduled jobs. All of them run the production deployment.</p>
+  </div>
+  <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+</div>
+
+<section class="section" aria-labelledby="web">
+  <h2 id="web">Web</h2>
+  <div class="summary">
+    <span class="summary-label">Website</span>
+    <div class="summary-body">
+      {% if production %}
+        {% if production.container_id %}{{ status({'shape': 'ready', 'word': 'Running', 'tone': 'success'}) }}{% else %}{{ status({'shape': 'failed', 'word': 'Container gone', 'tone': 'failure'}) }}{% endif %}
+        <a href="/deployments/{{ production.short_id }}">#{{ production.number }}</a>
+        <span class="mono">{{ production.git_sha[:8] }}</span>
+      {% else %}
+        <span class="muted">Nothing is in production yet.</span>
+      {% endif %}
+    </div>
+    <span></span>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="workers">
+  <h2 id="workers">Workers <a class="more" href="/projects/{{ project.slug }}/runtime/workers">Workers</a></h2>
+  {% if workers %}
+  <ul class="rows">
+    {% for p, mark, sentence in workers %}
+    <li class="summary">
+      <a class="mono" href="/projects/{{ project.slug }}/runtime/workers/{{ p.name }}">{{ p.name }}</a>
+      <div class="summary-body">{% if mark %}{{ status(mark) }}{% endif %}<span class="muted">{{ sentence }}</span></div>
+      <span class="muted small">{{ p.replicas }} replica{{ '' if p.replicas == 1 else 's' }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="section-lead">No workers.</p>
+  {% endif %}
+</section>
+
+<section class="section" aria-labelledby="jobs">
+  <h2 id="jobs">Jobs <a class="more" href="/projects/{{ project.slug }}/runtime/jobs">Jobs</a></h2>
+  {% if jobs %}
+  <ul class="rows">
+    {% for p, run, mark, next_run in jobs %}
+    <li class="summary">
+      <a class="mono" href="/projects/{{ project.slug }}/runtime/jobs/{{ p.name }}">{{ p.name }}</a>
+      <div class="summary-body">
+        {% if mark %}{{ status(mark) }}{% else %}<span class="muted">Not run yet</span>{% endif %}
+        {% if run and p.enabled %}<span class="muted">{{ clock(run.scheduled_for, now) }} UTC</span>{% endif %}
+      </div>
+      <span class="muted small">{% if next_run %}next {{ clock(next_run, now) }} UTC{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="section-lead">No scheduled jobs.</p>
+  {% endif %}
+</section>
+{% endblock %}

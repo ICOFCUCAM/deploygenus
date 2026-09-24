@@ -1,60 +1,49 @@
 {% extends "base.html" %}
+{% from "_macros.html" import message %}
 {% block title %}Import {{ repo.full_name }} — DeployPro{% endblock %}
 {% block content %}
-<div class="breadcrumb"><a href="/">Projects</a> / <a href="/projects/new">new</a> / {{ repo.full_name }}</div>
-<div class="page-head">
-  <div>
+<p class="crumbs"><a href="/">Projects</a> › <a href="/projects/new">New project</a> › {{ repo.full_name }}</p>
+<div class="head">
+  <div class="head-main">
     <h1>Import {{ repo.name }}</h1>
-    <div class="row-sub mono">{{ repo.full_name }}{% if repo.private %} · private{% endif %}</div>
+    <p class="head-sub mono">{{ repo.full_name }}{% if repo.private %} · private{% endif %}</p>
   </div>
 </div>
+{{ message('', err) }}
 
-<div class="card"><div class="card-body">
-<form method="post" action="/projects/new/github">
+<form class="form" method="post" action="/projects/new/github">
   <input type="hidden" name="repo" value="{{ repo.full_name }}">
   <input type="hidden" name="installation" value="{{ repo.installation_id }}">
 
   <div class="field">
     <label for="name">Name</label>
-    <input type="text" id="name" name="name" value="{{ suggested_name }}" required autofocus>
+    <input type="text" id="name" name="name" value="{{ suggested_name }}" required>
   </div>
-
-  <div class="grid-2">
+  <div class="fields-2">
     <div class="field">
       <label for="production_branch">Production branch</label>
-      <input type="text" id="production_branch" name="production_branch" value="{{ repo.default_branch }}">
-      <div class="hint">A push here goes live. Pushes to other branches deploy as previews.</div>
-    </div>
-    <div class="field field-mono">
-      <label for="root_directory">Root directory <span class="faint">optional</span></label>
-      <input type="text" id="root_directory" name="root_directory" placeholder="web">
-      <div class="hint">If the app is in a subdirectory, name it here.</div>
-    </div>
-  </div>
-
-  <div class="grid-2">
-    <div class="field field-mono">
-      <label for="slug">Slug <span class="faint">optional</span></label>
-      <input type="text" id="slug" name="slug" placeholder="made from the name">
+      <input class="mono-input" type="text" id="production_branch" name="production_branch" value="{{ repo.default_branch }}" aria-describedby="branch_hint">
+      <p class="hint" id="branch_hint">A push here goes live. Pushes to other branches deploy as previews.</p>
     </div>
     <div class="field">
-      <label for="memory_mb">Memory limit (MB)</label>
-      <input type="text" id="memory_mb" name="memory_mb" value="512">
+      <label for="root_directory">Root directory <span class="muted">(optional)</span></label>
+      <input class="mono-input" type="text" id="root_directory" name="root_directory" placeholder="web">
     </div>
   </div>
-
-  <div class="actions">
-    <button class="btn btn-primary" type="submit">Deploy</button>
-    <a class="btn" href="/projects/new">Cancel</a>
+  <div class="fields-2">
+    <div class="field">
+      <label for="slug">Slug <span class="muted">(optional)</span></label>
+      <input class="mono-input" type="text" id="slug" name="slug" placeholder="made from the name">
+    </div>
+    <div class="field">
+      <label for="memory_mb">Memory (MB)</label>
+      <input type="text" inputmode="numeric" id="memory_mb" name="memory_mb" value="512">
+    </div>
   </div>
+  <div class="actions">
+    <button class="btn btn-primary" type="submit">Deploy {{ repo.default_branch }}</button>
+    <a class="btn btn-quiet" href="/projects/new">Cancel</a>
+  </div>
+  <p class="hint">DeployPro detects the application’s framework automatically from the repository’s files. If it has a <span class="mono">Dockerfile</span>, that is used as it is.</p>
 </form>
-</div></div>
-
-<div class="card"><div class="card-body">
-  <p class="dim" style="margin:0;font-size:13.5px">
-    DeployPro works out how to build it from the repository's files: Vite,
-    Next.js, Nuxt, Astro, SvelteKit, Remix, plain HTML, Node, Python and Go, or
-    the repository's own Dockerfile if it has one.
-  </p>
-</div></div>
 {% endblock %}

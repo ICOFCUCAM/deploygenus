@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, message %}
+{% block title %}Jobs — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Jobs</h1>
+    <p class="head-sub">Times are UTC. Jobs run on production only, never on previews. After downtime, only the latest missed run is made up, looking back up to 25 hours.</p>
+  </div>
+  <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+</div>
+<div class="actions" style="margin-bottom:24px"><a class="btn btn-primary" href="#add">Add job</a></div>
+{{ message(ok, err) }}
+
+{% if jobs %}
+<ul class="rows" aria-label="Jobs">
+  {% for p, run, mark, next_run, description in jobs %}
+  <li class="item">
+    <div><a class="item-name mono" href="/projects/{{ project.slug }}/runtime/jobs/{{ p.name }}">{{ p.name }}</a></div>
+    <div class="item-body">
+      <span>{{ description or p.schedule }} <span class="muted mono">{{ p.schedule }}</span></span>
+      {% if not p.enabled %}
+        <span>{{ status(mark) }} <span class="muted">No runs are scheduled.</span></span>
+      {% elif run %}
+        <span class="{% if run.status.value == 'running' %}live{% endif %}">{{ status(mark) }}
+          <span class="muted">{{ clock(run.scheduled_for, now) }}
+          {%- if run.status.value == 'running' and run.started_at %} · {{ duration((now - run.started_at).total_seconds()) }}
+          {%- elif run.duration_seconds is not none %} · {{ duration(run.duration_seconds) }}{% endif %}
+          {%- if run.exit_code is not none and run.exit_code != 0 %} · exit {{ run.exit_code }}{% endif %}
+          {%- if run.status.value == 'skipped' %} · nothing was in production{% endif %}</span></span>
+      {% else %}
+        <span class="muted">Not run yet.{% if next_run %} First run {{ clock(next_run, now) }} UTC.{% endif %}</span>
+      {% endif %}
+      {% if next_run and run %}<span class="muted">next run {{ clock(next_run, now) }} UTC</span>{% endif %}
+    </div>
+    <div class="item-actions">
+      {% if p.enabled %}
+      <form method="post" action="/projects/{{ project.slug }}/processes/{{ p.name }}/run">
+        <button class="btn btn-small" type="submit">Run now</button>
+      </form>
+      {% else %}
+      <form method="post" action="/projects/{{ project.slug }}/processes/{{ p.name }}/toggle">
+        <button class="btn btn-small" type="submit">Resume</button>
+      </form>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty"><p>No scheduled jobs. A job runs a command from the production image on a schedule, in UTC.</p></div>
+{% endif %}
+
+<section class="section" id="add" aria-labelledby="add-job">
+  <h2 id="add-job">Add job</h2>
+  <form class="form" method="post" action="/projects/{{ project.slug }}/processes" style="margin-top:16px">
+    <input type="hidden" name="type" value="cron">
+    <div class="fields-2">
+      <div class="field">
+        <label for="j_name">Name</label>
+        <input class="mono-input" type="text" id="j_name" name="name" placeholder="cleanup" required>
+      </div>
+      <div class="field">
+        <label for="j_schedule">Schedule (UTC)</label>
+        <input class="mono-input" type="text" id="j_schedule" name="schedule" placeholder="0 3 * * *" required aria-describedby="j_schedule_hint">
+        <p class="hint" id="j_schedule_hint">Five-field cron: minute hour day month weekday.</p>
+      </div>
+    </div>
+    <div class="field">
+      <label for="j_command">Command</label>
+      <input class="mono-input" type="text" id="j_command" name="command" placeholder="node cleanup.js">
+    </div>
+    <div class="fields-2">
+      <div class="field">
+        <label for="j_timeout">Timeout (seconds)</label>
+        <input type="text" inputmode="numeric" id="j_timeout" name="timeout_seconds" value="900">
+      </div>
+      <div class="field">
+        <label for="j_memory">Memory (MB)</label>
+        <input type="text" inputmode="numeric" id="j_memory" name="memory_mb" value="512">
+      </div>
+    </div>
+    <div><button class="btn btn-secondary" type="submit">Add job</button></div>
+  </form>
+</section>
+{% endblock %}

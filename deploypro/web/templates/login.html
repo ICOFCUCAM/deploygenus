@@ -1,25 +1,24 @@
 {% extends "base.html" %}
+{% from "_macros.html" import message %}
 {% block title %}Sign in — DeployPro{% endblock %}
 {% block content %}
 <div class="login">
-  <span class="wordmark">deploypro<span>/</span></span>
+  <span class="wordmark">DeployPro</span>
   <p class="tagline">Deployments, on hardware you own.</p>
 
-  {% if err %}<div class="notice notice-bad">{{ err }}</div>{% endif %}
+  {{ message('', err) }}
 
-  <div class="card">
-    <div class="card-body">
-      <form method="post" action="/login">
-        <input type="hidden" name="next" value="{{ next }}">
-        <div class="field field-mono">
-          <label for="token">API token</label>
-          <input type="password" id="token" name="token" autofocus
-                 autocomplete="current-password" required>
-          <div class="hint">The value of <span class="mono">DEPLOYPRO_API_TOKEN</span>.</div>
-        </div>
-        <button class="btn btn-primary" type="submit">Sign in</button>
-      </form>
-    </div>
+  <div class="panel">
+    <form class="form" method="post" action="/login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label for="token">API token</label>
+        <input class="mono-input" type="password" id="token" name="token" autofocus
+               autocomplete="current-password" required aria-describedby="token_hint">
+        <p class="hint" id="token_hint">The value of <span class="mono">DEPLOYPRO_API_TOKEN</span>.</p>
+      </div>
+      <div><button class="btn btn-primary" type="submit">Sign in</button></div>
+    </form>
   </div>
 </div>
 {% endblock %}

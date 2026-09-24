@@ -1,81 +1,154 @@
-{# Shared fragments. Kept in one file so a status pill looks the same on the
-   list as it does on the detail page. #}
+{# Shared fragments: the marks, the deployment line, rows and controls.
 
-{% macro status_pill(status) -%}
-<span class="pill pill-{{ status }}"><span class="dot"></span>{{ status }}</span>
+   Marks are drawn in SVG from one place so a state looks the same on every
+   page. Each is decorative (aria-hidden): the word next to it carries the
+   meaning, and the shape carries it again without colour (Phase 4 §5). #}
+
+{% macro shape(name) -%}
+<svg class="mark mark-{{ name }}" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+{%- if name == 'queued' -%}
+<circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" stroke-width="1.75"/>
+{%- elif name == 'building' -%}
+<circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" stroke-width="1.75"/><path class="spin" d="M8 2.75a5.25 5.25 0 0 1 0 10.5z" fill="currentColor"/>
+{%- elif name == 'deploying' -%}
+<path d="M2.5 8h9.5M8.5 3.75 12.75 8 8.5 12.25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+{%- elif name == 'ready' -%}
+<circle cx="8" cy="8" r="6" fill="currentColor"/>
+{%- elif name == 'failed' -%}
+<path fill-rule="evenodd" d="M5.3 1.5h5.4l3.8 3.8v5.4l-3.8 3.8H5.3l-3.8-3.8V5.3zM4.25 7v2h7.5V7z" fill="currentColor"/>
+{%- elif name == 'cancelled' -%}
+<circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M3 13 13 3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+{%- elif name == 'caution' -%}
+<path fill-rule="evenodd" d="M8 1.25 15 14.25H1zM7.1 5.75v4.25h1.8V5.75zm0 5.5v1.6h1.8v-1.6z" fill="currentColor"/>
+{%- elif name == 'current' -%}
+<path d="M8 1.5 14.5 8 8 14.5 1.5 8z" fill="currentColor"/>
+{%- elif name == 'branch' -%}
+<rect x="4" y="4" width="8" height="8" fill="currentColor"/>
+{%- elif name == 'preview' -%}
+<rect x="4.25" y="4.25" width="7.5" height="7.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+{%- elif name == 'complete' -%}
+<path d="M3.25 8.5 6.5 11.75 12.75 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+{%- elif name == 'pending' -%}
+<circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+{%- elif name == 'external' -%}
+<path d="M6.5 3.5H3.5v9h9v-3M9 2.75h4.25V7M13 3 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+{%- endif -%}
+</svg>
 {%- endmacro %}
 
-{# `production_id` is the project's current production deployment. A
-   Deployment does not know whether it is production (that is a property of
-   the project), so the caller says which one is. #}
-{% macro deployment_row(d, production_id=none, show_project=false) -%}
-<a class="row" href="/deployments/{{ d.short_id }}">
-  <div class="row-main">
-    <div class="row-title">
-      <span>#{{ d.number }}</span>
-      {{ status_pill(d.status.value) }}
-      {% if production_id and d.id == production_id %}<span class="pill pill-prod">production</span>{% endif %}
-      {% if d.trigger.value != 'push' %}
-        <span class="pill pill-plain">{{ d.trigger.value }}</span>
-      {% endif %}
-    </div>
-    <div class="row-sub">
-      <span class="mono">{{ d.git_sha[:8] }}</span>
-      <span class="faint">on</span> {{ d.git_ref }}
-      {% if d.git_message %}— {{ d.git_message }}{% endif %}
-    </div>
-  </div>
-  <div class="row-aside">
-    {{ d.created_at.strftime('%d %b %H:%M') }}
-    {% if d.is_live %}<br><span class="mono faint">running</span>{% endif %}
-  </div>
-</a>
+{# A status: shape + word + colour. `m` is a views.Mark. #}
+{% macro status(m, extra_class='') -%}
+<span class="status tone-{{ m.tone }} {{ extra_class }}">{{ shape(m.shape) }}<span class="word">{{ m.word }}</span></span>
 {%- endmacro %}
 
-{% macro job_pill(status) -%}
-{% set tone = {'succeeded': 'ready', 'failed': 'failed', 'timed_out': 'failed',
-               'running': 'building', 'pending': 'queued',
-               'skipped': 'cancelled'}.get(status, 'plain') %}
-<span class="pill pill-{{ tone }}"><span class="dot"></span>{{ status.replace('_', ' ') }}</span>
+{# The deployment's production relationship: kind (Production branch /
+   Preview) and, on exactly one deployment, the current-production marker.
+   Neither is a colour state (Phase 4 §5). #}
+{% macro relationship(v) -%}
+<span class="tag">{{ shape('branch' if v.production_branch else 'preview') }}<span class="word">{{ 'Production branch' if v.production_branch else 'Preview' }}</span></span>
+{%- if v.is_current %}<span class="tag tag-current">{{ shape('current') }}<span class="word">Current production</span></span>{% endif %}
 {%- endmacro %}
 
-{% macro process_row(item, project_slug) -%}
-{% set p = item.process %}
-<div class="row">
-  <div class="row-main">
-    <div class="row-title">
-      <a href="/projects/{{ project_slug }}/processes/{{ p.name }}"
-         class="mono">{{ p.name }}</a>
-      <span class="pill pill-plain">{{ p.type.value }}</span>
-      {% if not p.enabled %}<span class="pill pill-cancelled">paused</span>{% endif %}
-      {% if item.last_run %}{{ job_pill(item.last_run.status.value) }}{% endif %}
-    </div>
-    <div class="row-sub">
-      {% if p.command %}<span class="mono">{{ p.command }}</span>{% else %}
-        <span class="faint">the image's own command</span>{% endif %}
-      {% if item.description %} · {{ item.description }}{% endif %}
-      {% if p.type.value == 'worker' %} · {{ p.replicas }}×{% endif %}
-    </div>
-  </div>
-  <div class="row-aside">
-    {% if item.next_run_at %}
-      next {{ item.next_run_at.strftime('%d %b %H:%M') }} UTC
-    {% elif p.type.value == 'cron' %}
-      <span class="faint">paused</span>
-    {% endif %}
-  </div>
-  <div class="actions">
-    <form method="post"
-          action="/projects/{{ project_slug }}/processes/{{ p.name }}/toggle">
-      <button class="btn btn-small" type="submit">
-        {{ 'Resume' if not p.enabled else 'Pause' }}
-      </button>
-    </form>
-    <form method="post"
-          action="/projects/{{ project_slug }}/processes/{{ p.name }}/delete"
-          onsubmit="return confirm('Remove {{ p.name }}?')">
-      <button class="btn btn-small btn-danger" type="submit">Remove</button>
-    </form>
-  </div>
+{% macro runtime(v) -%}
+{%- if v.runtime == 'running' -%}
+<span class="status tone-success">{{ shape('ready') }}<span class="word">Running</span></span>
+{%- elif v.runtime == 'stopped' -%}
+<span class="status tone-neutral">{{ shape('queued') }}<span class="word">Stopped</span></span>
+{%- endif -%}
+{%- endmacro %}
+
+{# A branch label shortened in the middle (Phase 2 §2I). The text content is
+   the whole string, so the accessible name is complete. #}
+{% macro middle(text) -%}
+{%- set parts = split_label(text) -%}
+<span class="middle"><span class="middle-head">{{ parts[0] }}</span>{% if parts[1] %}<span class="middle-tail">{{ parts[1] }}</span>{% endif %}</span>
+{%- endmacro %}
+
+{# One control from views.Action. `style` is primary / secondary / danger /
+   quiet. Posts are forms, so every action works without JavaScript. #}
+{% macro action(a, style='secondary', back='') -%}
+<div class="action">
+{%- if a.method == 'get' -%}
+<a class="btn btn-{{ style }}" href="{{ a.url }}">{{ middle(a.label) }}</a>
+{%- else -%}
+<form method="post" action="{{ a.url }}">{% if back %}<input type="hidden" name="back" value="{{ back }}">{% endif %}<button class="btn btn-{{ style }}" type="submit">{{ middle(a.label) }}</button></form>
+{%- endif -%}
+{%- if a.note %}<p class="action-note">{{ a.note }}</p>{% endif -%}
 </div>
+{%- endmacro %}
+
+{# The deployment line (Phase 4 §2): an ordered list with each node's state as
+   text, so it reads without sight; the drawing is decoration. #}
+{% macro line(nodes, compact=false) -%}
+<ol class="line{% if compact %} line-compact{% endif %}" aria-label="Deployment lifecycle">
+{%- for n in nodes %}
+  <li class="node node-{{ n.state }} node-{{ n.key }}"{% if n.state == 'active' %} aria-current="step"{% endif %}>
+    <span class="node-mark">
+      {%- if n.state == 'complete' %}{{ shape('complete') }}
+      {%- elif n.state == 'active' %}{{ shape({'source': 'queued', 'build': 'building', 'deploy': 'deploying'}[n.key]) }}
+      {%- elif n.state == 'failed' %}{{ shape('failed') }}
+      {%- elif n.state == 'cancelled' %}{{ shape('cancelled') }}
+      {%- elif n.state == 'current' %}{{ shape('current') }}
+      {%- elif n.state == 'end' %}{{ shape('preview') }}
+      {%- else %}{{ shape('pending') }}{% endif -%}
+    </span>
+    <span class="node-label">{{ n.label }}</span>
+    <span class="visually-hidden">{{ n.spoken }}</span>
+    {%- if not compact %}
+    <span class="node-detail" aria-hidden="true">
+      {%- if n.state == 'current' %}Current production
+      {%- elif n.state == 'not-current' %}Not current
+      {%- elif n.state == 'end' %}Ends at deploy
+      {%- elif n.state == 'active' %}in progress
+      {%- elif n.state == 'failed' %}failed
+      {%- elif n.state == 'cancelled' %}cancelled
+      {%- else %}{{ n.detail }}{% endif %}</span>
+    {%- if n.extra %}<span class="node-extra" aria-hidden="true">{{ n.extra }}</span>{% endif %}
+    {%- endif %}
+  </li>
+{%- endfor %}
+</ol>
+{%- endmacro %}
+
+{# One deployment row (Phase 4 §12, Phase 5 §3.1). #}
+{% macro deployment_row(v, now) -%}
+{% set d = v.d %}
+<li class="drow{% if v.is_current %} drow-current{% endif %}">
+  <div class="drow-state">
+    <a class="drow-number" href="/deployments/{{ d.short_id }}">#{{ d.number }}</a>
+    {{ status(v.mark) }}
+    {{ relationship(v) }}
+  </div>
+  <div class="drow-source">
+    <span class="mono">{{ d.git_sha[:8] }}</span>
+    <span class="branch">{{ d.git_ref }}</span>
+  </div>
+  {%- if d.git_message %}
+  <div class="drow-message">{{ d.git_message }}</div>
+  {%- endif %}
+  <div class="drow-meta">
+    <span title="{{ d.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ clock(d.created_at, now) }}</span>
+    {%- if v.took %}<span>{{ v.took }}</span>{% endif %}
+    {%- if v.in_progress and v.since %}<span>elapsed <span class="mono" data-since="{{ v.since.isoformat() }}">{{ duration((now - v.since).total_seconds()) }}</span></span>{% endif %}
+    {%- if v.failed_step %}<span>Failed at {{ v.failed_word }}</span>{% endif %}
+    {%- if v.runtime %}{{ runtime(v) }}{% endif %}
+  </div>
+</li>
+{%- endmacro %}
+
+{# A destructive action behind a no-JavaScript confirmation (Phase 3 §12):
+   the consequence is stated next to the final button. #}
+{% macro confirm(label, url, consequence, button=none) -%}
+<details class="confirm">
+  <summary>{{ label }}</summary>
+  <div class="confirm-body">
+    <p>{{ consequence }}</p>
+    <form method="post" action="{{ url }}"><button class="btn btn-danger" type="submit">{{ button or label }}</button></form>
+  </div>
+</details>
+{%- endmacro %}
+
+{% macro message(ok, err) -%}
+{%- if err %}<div class="message tone-failure" role="alert">{{ shape('failed') }}<p>{{ err }}</p></div>{% endif -%}
+{%- if ok %}<div class="message tone-success" role="status">{{ shape('ready') }}<p>{{ ok }}</p></div>{% endif -%}
 {%- endmacro %}

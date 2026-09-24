@@ -193,7 +193,7 @@ class TestBothDeletePathsUseIt:
         return calls
 
     async def test_the_dashboard(self, client, repos, deleted):
-        response = await client.post("/projects/blog/delete")
+        response = await client.post("/projects/blog/delete", data={"confirm": "Blog"})
         assert response.status_code == 303
         assert deleted == ["blog"]
 

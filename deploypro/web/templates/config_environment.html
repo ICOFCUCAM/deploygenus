@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "_macros.html" import message, confirm, shape %}
+{% block title %}Environment — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Environment</h1>
+    <p class="head-sub">Variables are read at build time and at run time, so a change applies on the next deploy. Values are encrypted and never shown.</p>
+  </div>
+</div>
+{{ message(ok, err) }}
+
+{% if changed and production %}
+<div class="message tone-caution" role="status">
+  {{ shape('caution') }}
+  <div class="actions" style="align-items:center;flex:1">
+    <p>Changed since production was built — redeploy to apply: <span class="mono">{{ changed | map(attribute='key') | join(', ') }}</span></p>
+    <form method="post" action="/deployments/{{ production.short_id }}/redeploy">
+      <button class="btn btn-secondary btn-small" type="submit">Redeploy</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% for target, label, items in scopes %}
+<section class="section" aria-labelledby="scope-{{ target.value }}">
+  <h2 id="scope-{{ target.value }}">{{ label }}</h2>
+  {% if items %}
+  <ul class="rows">
+    {% for var in items %}
+    <li class="item">
+      <span class="item-name mono">{{ var.key }}</span>
+      <div class="item-body muted">updated {{ clock(var.updated_at, now) }} UTC</div>
+      <div class="item-actions">
+        {{ confirm('Remove', '/projects/' ~ project.slug ~ '/env/' ~ var.key ~ '/delete', 'The value can’t be recovered. Running deployments keep it until the next deploy.', 'Remove ' ~ var.key) }}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="section-lead">None.</p>
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if overridden %}
+<p class="section-lead">
+  {% for key, target in overridden %}
+    <span class="mono">{{ key }}</span>: the {{ 'Production only' if target.value == 'production' else 'Preview only' }} value is used {{ 'in production' if target.value == 'production' else 'in previews' }}.{% if not loop.last %}<br>{% endif %}
+  {% endfor %}
+</p>
+{% endif %}
+
+<section class="section" aria-labelledby="provided">
+  <h2 id="provided">Provided by DeployPro</h2>
+  <p class="section-lead">Every deployment is told about itself, read-only:</p>
+  <dl class="facts" style="margin-top:12px">
+    <dt class="mono">DEPLOYPRO_DEPLOYMENT</dt><dd>the deployment's id</dd>
+    <dt class="mono">DEPLOYPRO_GIT_SHA</dt><dd>the commit it was built from</dd>
+    <dt class="mono">DEPLOYPRO_URL</dt><dd>its own address</dd>
+    <dt class="mono">DEPLOYPRO_ENV</dt><dd><span class="mono">production</span> or <span class="mono">preview</span></dd>
+  </dl>
+</section>
+
+<section class="section" aria-labelledby="add">
+  <h2 id="add">Add variable</h2>
+  <form class="form" method="post" action="/projects/{{ project.slug }}/env" style="margin-top:16px">
+    <div class="fields-2">
+      <div class="field">
+        <label for="key">Key</label>
+        <input class="mono-input" type="text" id="key" name="key" placeholder="DATABASE_URL" required>
+      </div>
+      <div class="field">
+        <label for="target">Scope</label>
+        <select id="target" name="target" aria-describedby="target_hint">
+          <option value="all">All environments</option>
+          <option value="production">Production only</option>
+          <option value="preview">Preview only</option>
+        </select>
+        <p class="hint" id="target_hint">A Production only or Preview only value is used over an All environments value with the same key.</p>
+      </div>
+    </div>
+    <div class="field">
+      <label for="value">Value</label>
+      <input class="mono-input" type="password" id="value" name="value" required autocomplete="off">
+    </div>
+    <div><button class="btn btn-primary" type="submit">Add variable</button></div>
+  </form>
+</section>
+{% endblock %}

@@ -38,7 +38,9 @@ include = ["deploypro*"]
 # server from /app, where the source tree sits — the same blind spot that let
 # `migrate` find no migrations from the installed package.
 [tool.setuptools.package-data]
-deploypro = ["web/templates/*.html", "web/static/*"]
+# `web/static/*` does not reach into subfolders: the fonts need their own
+# pattern, or a real install serves the dashboard without them.
+deploypro = ["web/templates/*.html", "web/static/*", "web/static/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

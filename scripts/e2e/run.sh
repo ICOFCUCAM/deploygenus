@@ -499,8 +499,12 @@ fi
 
 step "the dashboard"
 COOKIE="$(curl -s -c - -o /dev/null -X POST -d "token=$DEPLOYPRO_API_TOKEN" http://127.0.0.1:18000/login | awk '/deploypro/ {print $6"="$7}' | tail -1)"
-check "the project page shows the volume" \
-    bash -c "curl -s -b '$COOKIE' http://127.0.0.1:18000/projects/$SLUG | grep -q deploypro_${SLUG}_recordings"
+check "the storage page shows the volume" \
+    bash -c "curl -s -b '$COOKIE' http://127.0.0.1:18000/projects/$SLUG/config/storage | grep -q deploypro_${SLUG}_recordings"
+check "the overview shows production serving" \
+    bash -c "curl -s -b '$COOKIE' http://127.0.0.1:18000/projects/$SLUG | grep -q 'Serving'"
+check "the dashboard serves its own fonts" \
+    bash -c "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/static/fonts/ibm-plex-sans-latin-400-normal.woff2 | grep -q 200"
 
 step "the GitHub App: connect, import a private repository, deploy on push"
 DASH=http://127.0.0.1:18000
@@ -553,8 +557,8 @@ check "the log says it cloned through the app" \
     test "$(sql "select count(*) from deployment_logs where line like '%through the GitHub App%'")" -ge 1
 check "no log line contains a token" \
     test "$(sql "select count(*) from deployment_logs where line like '%ghs_%' or line like '%x-access-token%'")" = 0
-check "the page says pushes deploy it" \
-    bash -c "curl -s -b '$JAR' $DASH/projects/$GH_SLUG | grep -q 'through the GitHub App'"
+check "the repository page says pushes deploy it" \
+    bash -c "curl -s -b '$JAR' $DASH/projects/$GH_SLUG/config/repository | grep -q 'through the GitHub App'"
 
 commit_version v9-app
 SHA="$(git -C "$WORK/src" rev-parse HEAD)"
@@ -586,6 +590,10 @@ project_containers() { docker ps -aq --filter "label=deploypro.project=$1" | wc 
 check "before: the project has containers" test "$(project_containers "$GH_SLUG")" -ge 1
 check "before: its deployment answers on its own address" serves "$GH_HOST" "version="
 curl -s -b "$JAR" -o /dev/null -X POST "$DASH/projects/$GH_SLUG/delete"
+check "deleting without typing the project name is refused" \
+    test "$(sql "select count(*) from projects where slug = '$GH_SLUG'")" = 1
+GH_NAME="$(sql "select name from projects where slug = '$GH_SLUG'")"
+curl -s -b "$JAR" -o /dev/null -X POST --data-urlencode "confirm=$GH_NAME" "$DASH/projects/$GH_SLUG/delete"
 check "the project is gone from the database" \
     test "$(sql "select count(*) from projects where slug = '$GH_SLUG'")" = 0
 check "every one of its containers was removed" test "$(project_containers "$GH_SLUG")" = 0

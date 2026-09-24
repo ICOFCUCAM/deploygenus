@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% from "_macros.html" import message %}
+{% block title %}Repository — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Repository</h1>
+    <p class="head-sub">Where {{ project.name }} comes from, and how pushes reach DeployPro.</p>
+  </div>
+</div>
+{{ message(ok, err) }}
+
+{% set linked = project.github_repo and project.github_installation_id %}
+<dl class="facts">
+  <dt>Repository</dt><dd class="mono">{{ project.repo_url }}</dd>
+  <dt>Read through</dt>
+  <dd>
+    {% if linked %}the GitHub App, as <span class="mono">{{ project.github_repo }}</span>. Private repositories need nothing more.
+    {% elif project.deploy_key_public and repo_is_ssh %}this project’s deploy key.
+    {% else %}a public URL: no credentials are used.{% endif %}
+  </dd>
+  <dt>Pushes</dt>
+  <dd>
+    {% if linked %}A push to <span class="mono">{{ project.production_branch }}</span> goes live; a push to any other branch deploys a preview.
+    {% else %}Arrive only through a webhook you add on GitHub (below). If you added it, pushes deploy.{% endif %}
+  </dd>
+</dl>
+
+<section class="section" aria-labelledby="source">
+  <h2 id="source">Project</h2>
+  <form class="form" method="post" action="/projects/{{ project.slug }}/config/repository" style="margin-top:16px">
+    <div class="fields-2">
+      <div class="field">
+        <label for="name">Project name</label>
+        <input type="text" id="name" name="name" value="{{ project.name }}">
+      </div>
+      <div class="field">
+        <label for="production_branch">Production branch</label>
+        <input class="mono-input" type="text" id="production_branch" name="production_branch" value="{{ project.production_branch }}" aria-describedby="branch_hint">
+        <p class="hint" id="branch_hint">Pushes here go live. Every other branch deploys as a preview.</p>
+      </div>
+    </div>
+    <div><button class="btn {{ 'btn-secondary' if (github_app and repo_on_github and not linked) else 'btn-primary' }}" type="submit">Save</button></div>
+  </form>
+</section>
+
+<section class="section" aria-labelledby="github">
+  <h2 id="github">GitHub</h2>
+  {% if linked %}
+    <p class="section-lead">Linked to <span class="mono">{{ project.github_repo }}</span> through the GitHub App. The webhook and deploy key are not needed.</p>
+    <form method="post" action="/projects/{{ project.slug }}/github/unlink" style="margin-top:12px">
+      <details class="confirm">
+        <summary>Unlink from GitHub</summary>
+        <div class="confirm-body">
+          <p>Pushes stop deploying this project. It can be linked again at any time.</p>
+          <button class="btn btn-danger" type="submit">Unlink</button>
+        </div>
+      </details>
+    </form>
+  {% elif github_app and repo_on_github %}
+    <p class="section-lead">Link this project to the GitHub App and every push deploys it by itself. The webhook and deploy key below are then not needed.</p>
+    <form method="post" action="/projects/{{ project.slug }}/github/link" style="margin-top:12px">
+      <button class="btn btn-primary" type="submit">Link to GitHub</button>
+    </form>
+  {% else %}
+    <p class="section-lead">{% if not github_app %}No GitHub App is connected. <a href="/github/connect">Connect GitHub</a> to deploy on every push without webhooks or keys.{% else %}This repository is not on GitHub, so the GitHub App can’t read it.{% endif %}</p>
+  {% endif %}
+</section>
+
+{% if not linked %}
+<section class="section" aria-labelledby="webhook">
+  <h2 id="webhook">Webhook</h2>
+  <p class="section-lead">Add this to the repository under Settings → Webhooks to deploy on every push. DeployPro only knows a secret exists, not whether GitHub uses it.</p>
+  <dl class="facts" style="margin-top:12px">
+    <dt>Payload URL</dt><dd class="mono">{{ webhook_url }}</dd>
+    <dt>Content type</dt><dd class="mono">application/json</dd>
+    <dt>Secret</dt>
+    <dd>
+      <details>
+        <summary class="small">Show the secret</summary>
+        <span class="mono" id="hook-secret">{{ project.webhook_secret }}</span>
+      </details>
+    </dd>
+  </dl>
+</section>
+
+<section class="section" aria-labelledby="key">
+  <h2 id="key">Deploy key</h2>
+  {% if project.deploy_key_public %}
+    <p class="section-lead">Add this to the repository on GitHub: Settings → Deploy keys → Add deploy key. Leave “Allow write access” off; DeployPro only reads.</p>
+    <pre class="log" style="margin-top:12px;max-height:none">{{ project.deploy_key_public }}</pre>
+    {% if not repo_is_ssh %}
+      <p class="section-lead">The repository URL is not an SSH URL, so this key is not used yet. Switch it to the form <span class="mono">git@github.com:owner/repo.git</span>.</p>
+    {% endif %}
+    <form method="post" action="/projects/{{ project.slug }}/deploy-key" style="margin-top:12px">
+      <input type="hidden" name="rotate" value="1">
+      <details class="confirm">
+        <summary>Replace the key</summary>
+        <div class="confirm-body">
+          <p>The current key stops working now. Add the new one to GitHub before the next deploy.</p>
+          <button class="btn btn-danger" type="submit">Replace key</button>
+        </div>
+      </details>
+    </form>
+  {% else %}
+    <p class="section-lead">For a private repository without the GitHub App: make a key here, add it to the repository as a read-only deploy key, and use the repository’s SSH URL.</p>
+    <form method="post" action="/projects/{{ project.slug }}/deploy-key" style="margin-top:12px">
+      <button class="btn btn-secondary" type="submit">Make a deploy key</button>
+    </form>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

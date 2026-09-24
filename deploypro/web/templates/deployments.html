@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "_macros.html" import message, action, deployment_row %}
+{% block title %}Deployments — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Deployments</h1>
+    {% if full %}<p class="head-sub">Showing the latest 25.</p>{% endif %}
+  </div>
+  <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+</div>
+{{ message(ok, err) }}
+
+{% if rows %}
+  <ul class="rows" aria-label="Deployments, newest first">
+    {% for v in rows %}{{ deployment_row(v, now) }}{% endfor %}
+  </ul>
+{% else %}
+  <div class="empty">
+    <p>No deployments yet.</p>
+    {{ action(deploy, 'primary', back=request.url.path) }}
+  </div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}<script src="/static/deploypro.js" defer></script>{% endblock %}

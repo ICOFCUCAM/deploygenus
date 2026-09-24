@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, shape, message, action, line, deployment_row, relationship %}
+{% block title %}{{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>{{ project.name }}</h1>
+    <p class="head-sub">
+      {% if address %}<a class="link-out" href="https://{{ address }}" rel="noreferrer">{{ address }}{{ shape('external') }}</a><span class="sep">·</span>{% endif %}
+      <span class="mono">{{ project.github_repo or project.repo_url }}</span><span class="sep">·</span>production branch <span class="branch mono">{{ project.production_branch }}</span>
+    </p>
+  </div>
+  <div>{{ status(mark, 'status-lg') }}</div>
+  <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+</div>
+{{ message(ok, err) }}
+
+{# Production: the strongest element on the page (Phase 5 §2). #}
+<section class="panel production" aria-labelledby="production">
+  <h2 id="production" class="visually-hidden">Production</h2>
+  <div class="production-top">
+    <div>
+      {% if block.state == 'serving' %}
+        {{ status(block.mark, 'status-lg') }}
+        {% set v = production_view %}
+        <div class="production-id">
+          <p class="commit">
+            <a href="/deployments/{{ production.short_id }}">#{{ production.number }}</a>
+            · <span class="mono">{{ production.git_sha[:8] }}</span>
+            {% if production.git_message %}· {{ production.git_message }}{% endif %}
+          </p>
+          <p class="muted small">Ready since {{ clock(production.ready_at, now) }} UTC ({{ ago(production.ready_at, now) }})
+            {% if block.rolled_back_from %} · Rolled back to #{{ production.number }} from <a href="/deployments/{{ block.rolled_back_from.short_id }}">#{{ block.rolled_back_from.number }}</a>{% endif %}
+          </p>
+        </div>
+      {% elif block.state == 'missing' %}
+        {{ status(block.mark, 'status-lg') }}
+        <p class="headline">{{ block.headline }}</p>
+        <p class="muted small">#{{ production.number }} · <span class="mono">{{ production.git_sha[:8] }}</span>. When it stopped is not recorded.</p>
+      {% elif block.state == 'first-running' %}
+        <div class="live">{{ status(block.mark, 'status-lg') }}</div>
+        <p class="headline">#{{ block.newer.number }} is {{ block.newer.status.value }}.</p>
+        <p class="muted small">Nothing is in production yet.</p>
+      {% elif block.state == 'first-failed' %}
+        {{ status(block.mark, 'status-lg') }}
+        <p class="headline">{{ block.headline }}</p>
+        {% if block.newer.error %}<p class="error-text">{{ block.newer.error.splitlines()[0] }}</p>{% endif %}
+        <p class="sentence">Nothing was serving, so nothing changed.</p>
+      {% else %}
+        <p class="headline">{{ block.headline }}</p>
+        <p class="muted small">Repository <span class="mono">{{ project.github_repo or project.repo_url }}</span> · production branch <span class="mono branch">{{ project.production_branch }}</span></p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if production_view %}
+    {{ line(production_view.nodes, compact=true) }}
+  {% endif %}
+
+  <div class="production-actions">
+    {{ action(block.primary, 'primary') }}
+    {% for a in block.secondary %}{{ action(a, 'secondary') }}{% endfor %}
+    {% if block.state == 'serving' and block.rollback %}
+      {% set target, speed = block.rollback %}
+      <div class="action">
+        <form method="post" action="/deployments/{{ target.short_id }}/promote">
+          <button class="btn btn-quiet" type="submit">Roll back to #{{ target.number }}</button>
+        </form>
+        <p class="action-note">{{ speed }}</p>
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+{% if conditions %}
+<section class="section" aria-labelledby="attention">
+  <h2 id="attention">Needs attention</h2>
+  <ul class="conditions">
+    {% for c in conditions %}
+    <li class="tone-{{ c.mark.tone }}">{{ shape(c.mark.shape) }}<span style="color:var(--text)">{{ c.text }}</span><a href="{{ c.url }}">Open</a></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if block.newer and block.state == 'serving' %}
+<section class="section" aria-labelledby="activity">
+  <h2 id="activity">Activity</h2>
+  {% set n = block.newer %}
+  <div class="summary">
+    <span class="summary-label">#{{ n.number }}</span>
+    <div class="summary-body {% if n.status.value in ['queued', 'building', 'deploying'] %}live{% endif %}">
+      {% if n.status.value == 'failed' %}
+        {{ status({'shape': 'failed', 'word': 'Failed', 'tone': 'failure'}) }}
+        <span>#{{ n.number }} failed. Production is still #{{ production.number }}.</span>
+      {% else %}
+        {{ status({'shape': n.status.value, 'word': n.status.value | capitalize, 'tone': 'neutral'}) }}
+        <span>#{{ n.number }} is {{ n.status.value }}{% if n.started_at %} · <span class="mono" data-since="{{ n.started_at.isoformat() }}">{{ duration((now - n.started_at).total_seconds()) }}</span>{% endif %} — production switches when it passes its health check.</span>
+      {% endif %}
+    </div>
+    <a href="/deployments/{{ n.short_id }}">View #{{ n.number }}</a>
+  </div>
+</section>
+{% endif %}
+
+<section class="section" aria-labelledby="runtime">
+  <h2 id="runtime">Runtime <a class="more" href="/projects/{{ project.slug }}/runtime">Runtime</a></h2>
+  <div class="rows">
+    <div class="summary" style="border-bottom:1px solid var(--hairline)">
+      <span class="summary-label">Web</span>
+      <div class="summary-body">
+        {% if production %}
+          {% if production.container_id %}{{ status({'shape': 'ready', 'word': 'Running', 'tone': 'success'}) }}{% else %}{{ status({'shape': 'failed', 'word': 'Container gone', 'tone': 'failure'}) }}{% endif %}
+          <span>#{{ production.number }}</span>
+        {% else %}<span class="muted">Nothing in production</span>{% endif %}
+      </div>
+      <span></span>
+    </div>
+    <div class="summary" style="border-bottom:1px solid var(--hairline)">
+      <span class="summary-label">Workers</span>
+      <div class="summary-body">
+        {% if workers %}
+          <span>{{ workers | length }} worker{{ '' if workers | length == 1 else 's' }}{% if production %} · follows production #{{ production.number }}{% endif %}</span>
+          {% for p, mark, sentence in workers if not p.enabled %}{{ status(mark) }} <span class="mono">{{ p.name }}</span>{% endfor %}
+        {% else %}<span class="muted">None</span>{% endif %}
+      </div>
+      <a href="/projects/{{ project.slug }}/runtime/workers">Workers</a>
+    </div>
+    <div class="summary" style="border-bottom:1px solid var(--hairline)">
+      <span class="summary-label">Jobs</span>
+      <div class="summary-body">
+        {% for p, run, mark, next_run in jobs %}
+          <span><span class="mono">{{ p.name }}</span>
+          {% if mark %}{{ status(mark) }}{% endif %}
+          {% if run and p.enabled %}{{ clock(run.scheduled_for, now) }}{% endif %}
+          {% if next_run %}· next {{ clock(next_run, now) }}{% endif %}</span>
+        {% else %}<span class="muted">None</span>{% endfor %}
+      </div>
+      <a href="/projects/{{ project.slug }}/runtime/jobs">Jobs</a>
+    </div>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="domains">
+  <h2 id="domains">Domains <a class="more" href="/projects/{{ project.slug }}/config/domains">Domains</a></h2>
+  {% if domains %}
+  <div class="rows">
+    {% for d, mark in domains %}
+    <div class="summary" style="border-bottom:1px solid var(--hairline)">
+      <span class="mono summary-label" style="color:var(--text)">{{ d.host }}</span>
+      <div class="summary-body">{{ status(mark) }}{% if d.is_primary %}<span class="muted small">primary</span>{% endif %}</div>
+      <span></span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="section-lead">No custom domain. Production has no permanent address until one is added and verified.</p>
+  {% endif %}
+</section>
+
+<section class="section" aria-labelledby="recent">
+  <h2 id="recent">Recent deployments {% if recent %}<a class="more" href="/projects/{{ project.slug }}/deployments">All deployments</a>{% endif %}</h2>
+  {% if recent %}
+  <ul class="rows">{% for v in recent %}{{ deployment_row(v, now) }}{% endfor %}</ul>
+  {% else %}
+  <p class="section-lead">No deployments yet.</p>
+  {% endif %}
+</section>
+
+<section class="section" aria-labelledby="configuration">
+  <h2 id="configuration">Configuration</h2>
+  <p class="section-lead">
+    {% set c = '/projects/' ~ project.slug ~ '/config' %}
+    <a href="{{ c }}/environment">Environment</a> ·
+    <a href="{{ c }}/domains">Domains</a> ·
+    <a href="{{ c }}/storage">Storage</a> ·
+    <a href="{{ c }}/build">Build</a> ·
+    <a href="{{ c }}/repository">Repository</a>
+  </p>
+</section>
+{% endblock %}
+
+{% block scripts %}<script src="/static/deploypro.js" defer></script>{% endblock %}

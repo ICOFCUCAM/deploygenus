@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_macros.html" import message %}
+{% block title %}Configuration — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Configuration</h1>
+    <p class="head-sub">How {{ project.name }} is configured. Changes apply on the next deploy unless a page says otherwise.</p>
+  </div>
+</div>
+{{ message(ok, err) }}
+
+{% set c = '/projects/' ~ project.slug ~ '/config' %}
+<ul class="rows" aria-label="Configuration areas">
+  <li class="summary">
+    <a href="{{ c }}/environment">Environment</a>
+    <div class="summary-body muted">
+      {{ variables | length }} variable{{ '' if variables | length == 1 else 's' }}
+      {% if changed %}· {{ changed | length }} changed since production was built{% endif %}
+    </div>
+    <span></span>
+  </li>
+  <li class="summary">
+    <a href="{{ c }}/domains">Domains</a>
+    <div class="summary-body muted">
+      {{ domains | length }} domain{{ '' if domains | length == 1 else 's' }}
+      {% if waiting %}· {{ waiting | length }} waiting for DNS{% endif %}
+    </div>
+    <span></span>
+  </li>
+  <li class="summary">
+    <a href="{{ c }}/storage">Storage</a>
+    <div class="summary-body muted">
+      {{ volumes | length }} mount{{ '' if volumes | length == 1 else 's' }}
+      {% if volumes %}· {{ 'included in the daily backup' if backups else 'backups are off' }}{% endif %}
+    </div>
+    <span></span>
+  </li>
+  <li class="summary">
+    <a href="{{ c }}/build">Build</a>
+    <div class="summary-body muted">
+      {{ framework }} · {{ project.memory_mb }} MB · keep {{ project.keep_warm }} for instant rollback
+    </div>
+    <span></span>
+  </li>
+  <li class="summary">
+    <a href="{{ c }}/repository">Repository</a>
+    <div class="summary-body muted">
+      <span class="mono">{{ project.github_repo or project.repo_url }}</span>
+      {% if project.github_repo and project.github_installation_id %}· GitHub App · pushes deploy{% endif %}
+    </div>
+    <span></span>
+  </li>
+</ul>
+
+{# Delete project: at the bottom of Configuration, separated, with the
+   consequences stated and the name typed (Phase 3 Q-S5). #}
+<section class="danger-zone" aria-labelledby="delete">
+  <h2 id="delete">Delete project</h2>
+  <p>Deleting {{ project.name }} can’t be undone.</p>
+  <ul>
+    <li>Every deployment, worker and job stops now. Its domains stop serving.</li>
+    <li>Its deployment history is deleted.</li>
+    <li>Its stored files are kept on the server.</li>
+  </ul>
+  <form class="form" method="post" action="/projects/{{ project.slug }}/delete">
+    <div class="field">
+      <label for="confirm">Type the project name, <strong>{{ project.name }}</strong>, to confirm</label>
+      <input type="text" id="confirm" name="confirm" autocomplete="off" required>
+    </div>
+    <div><button class="btn btn-danger" type="submit">Delete {{ project.name }}</button></div>
+  </form>
+</section>
+{% endblock %}

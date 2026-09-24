@@ -1,31 +1,71 @@
-<!doctype html>
+{% from "_macros.html" import message %}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}DeployPro{% endblock %}</title>
 <meta name="robots" content="noindex, nofollow">
+{#- Phase 3 Q-S2: a page refreshes itself only while something is in progress,
+    and configuration pages never do. `refresh` is set by the handler. #}
+{%- if refresh %}
+<meta http-equiv="refresh" content="15">
+{%- endif %}
+{% block head %}{% endblock %}
+<link rel="preload" href="/static/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/deploypro.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#9878;</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1.5 14.5 8 8 14.5 1.5 8z' fill='%232457D6'/></svg>">
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 {% if show_nav %}
-<header class="masthead">
-  <div class="masthead-inner">
-    <a class="wordmark" href="/">deploypro<span>/</span></a>
-    <nav>
-      <a href="/">Projects</a>
-      <a href="/logout">Sign out</a>
+<header class="bar">
+  <div class="bar-inner">
+    <a class="wordmark" href="/">DeployPro</a>
+    <nav class="bar-nav" aria-label="DeployPro">
+      <a href="/"{% if section is not defined %} aria-current="page"{% endif %}>Projects</a>
+      <a href="/system"{% if section == 'system' %} aria-current="page"{% endif %}>System</a>
     </nav>
+    <a class="bar-out" href="/logout">Sign out</a>
   </div>
 </header>
 {% endif %}
 
-<main class="page">
-  {% if ok %}<div class="notice notice-ok">{{ ok }}</div>{% endif %}
-  {% if err %}<div class="notice notice-bad">{{ err }}</div>{% endif %}
+<div class="frame{% if project is defined and section is defined and show_nav %} frame-project{% endif %}">
+{% if project is defined and section is defined and show_nav %}
+  {% set nav_base = '/projects/' ~ project.slug %}
+  {% set nav_items = [
+      ('overview', 'Overview', nav_base, 0),
+      ('deployments', 'Deployments', nav_base ~ '/deployments', 0),
+      ('runtime', 'Runtime', nav_base ~ '/runtime', 0),
+      ('workers', 'Workers', nav_base ~ '/runtime/workers', 1),
+      ('jobs', 'Jobs', nav_base ~ '/runtime/jobs', 1),
+      ('config', 'Configuration', nav_base ~ '/config', 0),
+      ('environment', 'Environment', nav_base ~ '/config/environment', 1),
+      ('domains', 'Domains', nav_base ~ '/config/domains', 1),
+      ('storage', 'Storage', nav_base ~ '/config/storage', 1),
+      ('build', 'Build', nav_base ~ '/config/build', 1),
+      ('repository', 'Repository', nav_base ~ '/config/repository', 1),
+  ] %}
+  {% set nav_current = (nav_items | selectattr(0, 'equalto', section) | first)[1] %}
+  {% macro project_links() -%}
+  <a class="nav-project" href="{{ nav_base }}">{{ project.name }}</a>
+  <ul>
+    {%- for key, label, href, depth in nav_items %}
+    <li class="depth-{{ depth }}"><a href="{{ href }}"{% if key == section %} aria-current="page"{% endif %}>{{ label }}</a></li>
+    {%- endfor %}
+  </ul>
+  {%- endmacro %}
+  <nav class="side" aria-label="Project">{{ project_links() }}</nav>
+  <details class="side-menu">
+    <summary>{{ project.name }} · {{ nav_current }}</summary>
+    <nav aria-label="Project menu">{{ project_links() }}</nav>
+  </details>
+{% endif %}
+
+<main class="page" id="main">
   {% block content %}{% endblock %}
 </main>
+</div>
 
 {% block scripts %}{% endblock %}
 </body>

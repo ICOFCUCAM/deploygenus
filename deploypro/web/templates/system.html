@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "_macros.html" import message, status %}
+{% block title %}System — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>System</h1>
+    <p class="head-sub">What is happening with DeployPro itself.</p>
+  </div>
+  <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+</div>
+{{ message(ok, err) }}
+
+<section class="section" aria-labelledby="github">
+  <h2 id="github">GitHub App</h2>
+  {% if not app %}
+    <p class="section-lead">Not connected. Connect GitHub once, and every repository you allow can be imported and deploys on push, private ones included.</p>
+    <div style="margin-top:12px"><a class="btn btn-primary" href="/github/connect">Connect GitHub</a></div>
+  {% else %}
+    <dl class="facts" style="margin-top:12px">
+      <dt>App</dt><dd><a href="{{ app.html_url }}" rel="noreferrer" class="mono">{{ app.slug }}</a></dd>
+      <dt>Installed on</dt>
+      <dd>
+        {% if installations %}
+          {% for i in installations %}<span class="mono">{{ i.account_login }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
+          · <a href="{{ install_url }}" rel="noreferrer">Choose repositories on GitHub</a>
+        {% else %}
+          {{ status({'shape': 'caution', 'word': 'Not installed', 'tone': 'caution'}) }}
+          The app exists but isn’t installed.
+        {% endif %}
+      </dd>
+    </dl>
+    {% if not installations %}
+      <div style="margin-top:12px"><a class="btn btn-primary" href="{{ install_url }}" rel="noreferrer">Install on GitHub</a></div>
+    {% endif %}
+  {% endif %}
+</section>
+
+<section class="section" aria-labelledby="settings">
+  <h2 id="settings">Installation settings</h2>
+  <p class="section-lead">Read-only here. Each is changed in <span class="mono">/opt/deploypro/.env</span> on the server, then applied by running the installer again.</p>
+  <dl class="facts" style="margin-top:12px">
+    {% for label, value, variable in settings_rows %}
+      <dt>{{ label }}</dt>
+      <dd>{{ value }} <span class="muted small">· <span class="mono">{{ variable }}</span></span></dd>
+    {% endfor %}
+  </dl>
+</section>
+
+{% if app %}
+<div class="danger-zone">
+  <h2>Disconnect GitHub</h2>
+  <form method="post" action="/github/disconnect">
+    <details class="confirm">
+      <summary>Disconnect the GitHub App</summary>
+      <div class="confirm-body">
+        <p>This can’t be undone. Pushes stop deploying. Imported projects stay but no longer deploy on push. Delete the app on GitHub too.</p>
+        <button class="btn btn-danger" type="submit">Disconnect</button>
+      </div>
+    </details>
+  </form>
+</div>
+{% endif %}
+{% endblock %}
