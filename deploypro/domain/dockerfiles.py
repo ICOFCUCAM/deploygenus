@@ -166,11 +166,36 @@ def _static_runtime(
     out; a statically exported site must answer 404, because serving the home
     page under every wrong URL is how a site gets its 404s indexed as
     duplicates of its front page.
+
+    The response headers are the platform's, not the project's, because a
+    static site has nowhere else to put them: there is no server to run a
+    middleware in, and Next's `headers()` is unsupported under
+    `output: 'export'`. A project moving here from a host that set them in
+    its own configuration file would otherwise lose them silently, which is
+    the worst way to lose a security header. `X-Frame-Options: DENY` is the
+    one opinionated choice — a site meant to be embedded in an iframe needs
+    it lifted, and today that means not using the generated Dockerfile.
     """
     fallback = (
         "try_files {path} {path}/ {path}.html /index.html"
         if spa
         else "try_files {path} {path}.html {path}/index.html"
+    )
+    # A site that renders its own 404 page should serve it. Caddy answers a
+    # missing file with a bare status line otherwise, which for an exported
+    # Next site means the 404.html it just built is never seen. An SPA never
+    # reaches here: its fallback matches everything.
+    not_found = (
+        []
+        if spa
+        else [
+            "",
+            "\thandle_errors {",
+            "\t\t@404 expression {err.status_code} == 404",
+            "\t\trewrite @404 /404.html",
+            "\t\tfile_server",
+            "\t}",
+        ]
     )
     caddyfile = "\n".join(
         [
@@ -185,12 +210,24 @@ def _static_runtime(
             f"\t{fallback}",
             "\tfile_server",
             "",
+            "\t# Baseline headers for every static site on the platform. See the",
+            "\t# docstring for why they live here and not in the project.",
+            "\theader {",
+            "\t\tX-Content-Type-Options nosniff",
+            "\t\tReferrer-Policy strict-origin-when-cross-origin",
+            "\t\tX-Frame-Options DENY",
+            "\t\t# Naming the server and its version only helps whoever is",
+            "\t\t# looking for hosts running a version with a known bug.",
+            "\t\t-Server",
+            "\t}",
+            "",
             "\t# Immutable build output is safe to cache hard; HTML is not,",
             "\t# because the next deploy must be visible on the next request.",
             "\t@immutable path /_next/static/* /assets/* /static/*",
             '\theader @immutable Cache-Control "public, max-age=31536000, immutable"',
             "\t@html path *.html /",
             '\theader @html Cache-Control "public, max-age=0, must-revalidate"',
+            *not_found,
             "}",
             "",
         ]

@@ -148,3 +148,46 @@ class TestExecForm:
     def test_a_command_needing_a_shell_keeps_one_but_execs_through_it(self):
         rendered = _exec_form("node server.js | tee log")
         assert rendered.startswith('["/bin/sh", "-c", "exec ')
+
+
+def _caddyfile(plan) -> str | None:
+    return dict(plan.context_files).get("Caddyfile")
+
+
+def test_every_static_site_gets_the_baseline_security_headers(plan):
+    """A static site has no server to run a middleware in, and Next's
+    `headers()` does nothing under `output: 'export'`. If the platform does
+    not set these, nothing does — and a project arriving from a host that set
+    them in its own config file loses them without a single error."""
+    caddyfile = _caddyfile(plan)
+    if caddyfile is None:
+        return
+    for header in (
+        "X-Content-Type-Options nosniff",
+        "Referrer-Policy strict-origin-when-cross-origin",
+        "X-Frame-Options DENY",
+    ):
+        assert header in caddyfile
+
+
+def test_the_server_does_not_announce_itself(plan):
+    """Its name and version are of use to nobody but whoever is looking for
+    hosts running a version with a published bug."""
+    caddyfile = _caddyfile(plan)
+    if caddyfile is not None:
+        assert "-Server" in caddyfile
+
+
+def test_an_exported_site_serves_its_own_404_page(repo):
+    """Next writes `404.html` during export. Without this Caddy answers a
+    missing path with a bare status line and that page is never seen."""
+    caddyfile = _caddyfile(detect(repo(FIXTURES["next-export"])))
+    assert "handle_errors" in caddyfile
+    assert "/404.html" in caddyfile
+
+
+def test_a_single_page_app_has_no_error_handler(repo):
+    """Its fallback already matches every path, so nothing reaches an error
+    handler and one would only be dead configuration."""
+    caddyfile = _caddyfile(detect(repo(FIXTURES["vite"])))
+    assert "handle_errors" not in caddyfile
