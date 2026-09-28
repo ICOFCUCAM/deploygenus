@@ -40,6 +40,11 @@ logger = logging.getLogger("deploypro.worker")
 #: immediate, long enough that an idle platform is not querying constantly.
 IDLE_POLL_SECONDS = 2.0
 
+#: How long a loop waits after an unexpected error before trying again: long
+#: enough not to spin on a database that is down, short enough that a queued
+#: deploy starts soon after it comes back.
+ERROR_BACKOFF_SECONDS = 15.0
+
 #: How often to look for work whose worker died.
 SWEEP_INTERVAL_SECONDS = 60.0
 
@@ -141,31 +146,55 @@ class Worker:
     # -- deploys ------------------------------------------------------------
 
     async def _deploy_loop(self) -> None:
+        await self._keep_going("deploy", self._deploy_once)
+
+    async def _keep_going(self, name: str, step) -> None:
+        """Run `step` until shutdown, surviving whatever it raises.
+
+        Regression: a full disk made Postgres refuse a write inside a deploy,
+        the error escaped the loop, and the worker stopped for good — every
+        deploy after it sat in the queue with nothing to pick it up. An error
+        here is now logged and retried after a pause. A deployment it
+        interrupted is failed as abandoned when its lease runs out, with the
+        reason in its record, as after a crash.
+        """
         while not self._stopping.is_set():
-            await self._reclaim()
-            deployment = await deployment_repo.claim_next(self._id)
-            if deployment is None:
-                await self._idle()
-                continue
+            try:
+                await step()
+            except Exception:  # noqa: BLE001 - the worker must never die
+                logger.exception(
+                    "%s loop failed; retrying in %.0fs", name, ERROR_BACKOFF_SECONDS
+                )
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        self._stopping.wait(), timeout=ERROR_BACKOFF_SECONDS
+                    )
 
-            logger.info(
-                "building %s #%s (%s)",
-                deployment.short_id,
-                deployment.number,
-                deployment.git_sha[:8],
-            )
-            started = time.monotonic()
-            finished = await pipeline.run_deployment(deployment, settings=self._settings)
-            await self._alert_on_deploy(finished)
-            logger.info(
-                "%s #%s finished as %s in %.1fs",
-                finished.short_id,
-                finished.number,
-                finished.status.value,
-                time.monotonic() - started,
-            )
+    async def _deploy_once(self) -> None:
+        await self._reclaim()
+        deployment = await deployment_repo.claim_next(self._id)
+        if deployment is None:
+            await self._idle()
+            return
 
-            await self._housekeeping()
+        logger.info(
+            "building %s #%s (%s)",
+            deployment.short_id,
+            deployment.number,
+            deployment.git_sha[:8],
+        )
+        started = time.monotonic()
+        finished = await pipeline.run_deployment(deployment, settings=self._settings)
+        await self._alert_on_deploy(finished)
+        logger.info(
+            "%s #%s finished as %s in %.1fs",
+            finished.short_id,
+            finished.number,
+            finished.status.value,
+            time.monotonic() - started,
+        )
+
+        await self._housekeeping()
 
     async def _alert_on_deploy(self, deployment) -> None:
         """A failed deploy of the production branch is worth a message: it is
@@ -200,34 +229,36 @@ class Worker:
     # -- scheduled jobs -----------------------------------------------------
 
     async def _job_loop(self) -> None:
-        while not self._stopping.is_set():
-            await self._schedule()
-            await self._sweep_draining()
-            self._every(
-                self._settings.monitor_interval_seconds,
-                "_last_monitor",
-                "monitor",
-                self._check,
-            )
-            self._every(
-                BACKUP_CHECK_INTERVAL_SECONDS,
-                "_last_backup_check",
-                "backup",
-                self._backup,
-            )
+        await self._keep_going("job", self._job_once)
 
-            if len(self._jobs) >= JOB_CONCURRENCY:
-                await self._idle()
-                continue
+    async def _job_once(self) -> None:
+        await self._schedule()
+        await self._sweep_draining()
+        self._every(
+            self._settings.monitor_interval_seconds,
+            "_last_monitor",
+            "monitor",
+            self._check,
+        )
+        self._every(
+            BACKUP_CHECK_INTERVAL_SECONDS,
+            "_last_backup_check",
+            "backup",
+            self._backup,
+        )
 
-            run = await process_repo.claim_next_run(self._id)
-            if run is None:
-                await self._idle()
-                continue
+        if len(self._jobs) >= JOB_CONCURRENCY:
+            await self._idle()
+            return
 
-            task = asyncio.create_task(self._execute(run))
-            self._jobs.add(task)
-            task.add_done_callback(self._jobs.discard)
+        run = await process_repo.claim_next_run(self._id)
+        if run is None:
+            await self._idle()
+            return
+
+        task = asyncio.create_task(self._execute(run))
+        self._jobs.add(task)
+        task.add_done_callback(self._jobs.discard)
 
     async def _execute(self, run) -> None:
         try:
