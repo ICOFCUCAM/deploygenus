@@ -547,10 +547,21 @@ Every hour, between deploys, the worker:
   `DEPLOYPRO_KEEP_IMAGES` ready deployments (10 by default). An older deployment
   stays listed and can be redeployed, which rebuilds it. Rolling back to it
   directly says exactly that.
-- **Prunes build cache** that nothing has used for a week.
+- **Prunes build cache** that nothing has used for a week, and caps the rest
+  at `DEPLOYPRO_BUILD_CACHE_MAX_GB` (8 by default), least recently used first.
+  Age alone never bounds it: a project that builds every day keeps its whole
+  cache "recently used".
+- **Removes build directories** a stopped worker left behind. Each deploy
+  deletes its own when it ends, success or failure.
 - **Deletes build logs and job runs** older than `DEPLOYPRO_LOG_RETENTION_DAYS`
   (30 by default). It always keeps the log of what is serving production, and
   each job's most recent run.
+
+Before every build it also checks for room. With less than
+`DEPLOYPRO_MIN_FREE_GB` free (5 by default) it runs the cleanup first, and if
+that is not enough the deployment fails with a message saying the disk is
+full. Letting the build fill the disk would take Postgres down with it, and
+every deploy after would fail with a database error instead.
 
 It only touches images this installation built, identified by a
 `deploypro.instance` label. A second DeployPro on the same Docker host, such as a

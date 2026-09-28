@@ -14,6 +14,9 @@ image name from the queued row (see deploypro.domain.retention).
 from __future__ import annotations
 
 import logging
+import shutil
+import time
+from pathlib import Path
 
 from deploypro.adapters import containers
 from deploypro.config import Settings
@@ -33,6 +36,15 @@ logger = logging.getLogger("deploypro.housekeeping")
 #: regardless. `settings.build_cache_max_gb` is the other half.
 BUILD_CACHE_HOURS = 24 * 7
 
+#: A build directory is removed when its deploy ends. One left behind means
+#: the worker was stopped mid-build; after this long nothing is using it.
+STALE_BUILD_DIR_SECONDS = 3600
+
+#: Job working directories hold only the env file a job starts with.
+STALE_JOB_DIR_SECONDS = 24 * 3600
+
+GB = 1024**3
+
 
 async def run(settings: Settings) -> dict[str, object]:
     report: dict[str, object] = {}
@@ -51,6 +63,12 @@ async def run(settings: Settings) -> dict[str, object]:
     except Exception as exc:  # noqa: BLE001 - each step stands alone
         logger.exception("build cache prune failed")
         report["build_cache_error"] = str(exc)
+
+    try:
+        report["build_dirs_removed"] = sweep_build_dirs(settings.build_root)
+    except Exception as exc:  # noqa: BLE001 - each step stands alone
+        logger.exception("build directory sweep failed")
+        report["build_dirs_error"] = str(exc)
 
     try:
         report["log_lines_deleted"] = await deployment_repo.delete_old_logs(
@@ -82,3 +100,65 @@ async def sweep_images(settings: Settings) -> list[str]:
         if await containers.prune_image(tag):
             removed.append(tag)
     return removed
+
+
+def sweep_build_dirs(build_root: Path, *, now: float | None = None) -> list[str]:
+    """Remove build and job directories a stopped worker left behind.
+
+    Each deploy deletes its own directory when it ends, success or failure;
+    only a worker killed mid-build (a restart, an upgrade) leaves one. Age is
+    the test rather than the deployment's state, because a promotion from the
+    dashboard writes into the same directory while no build is running.
+    """
+    now = time.time() if now is None else now
+    removed = []
+    if not build_root.is_dir():
+        return removed
+    candidates = [
+        (entry, STALE_BUILD_DIR_SECONDS)
+        for entry in build_root.iterdir()
+        if entry.is_dir() and entry.name != "jobs"
+    ]
+    jobs = build_root / "jobs"
+    if jobs.is_dir():
+        candidates += [
+            (entry, STALE_JOB_DIR_SECONDS) for entry in jobs.iterdir() if entry.is_dir()
+        ]
+    for entry, age in candidates:
+        if now - entry.stat().st_mtime > age:
+            shutil.rmtree(entry, ignore_errors=True)
+            removed.append(str(entry.relative_to(build_root)))
+    return sorted(removed)
+
+
+def free_gb(path: Path) -> float | None:
+    try:
+        return shutil.disk_usage(path).free / GB
+    except OSError:
+        return None
+
+
+async def ensure_room(settings: Settings) -> str | None:
+    """Make room for a build, or say why there is none.
+
+    A build that fills the disk takes the database with it: Postgres cannot
+    write, drops its connections, and every deploy after fails in seconds
+    with an error about the database rather than the disk. So a build does
+    not start below `min_free_gb`: old images and cache are cleared first,
+    and if that is not enough the reason is returned, to fail the deployment
+    before anything is written.
+    """
+    free = free_gb(settings.build_root)
+    if free is None or free >= settings.min_free_gb:
+        return None
+    report = await run(settings)
+    logger.info("housekeeping before a build, %.1f GB free: %s", free, report)
+    free = free_gb(settings.build_root)
+    if free is None or free >= settings.min_free_gb:
+        return None
+    return (
+        f"The server's disk is nearly full: {free:.1f} GB free, and a build needs "
+        f"at least {settings.min_free_gb} GB. Old images and build cache were "
+        "cleared and it is still not enough. Free space on the server "
+        "(`deploypro doctor` shows what is using it), then redeploy."
+    )
