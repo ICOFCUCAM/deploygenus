@@ -27,6 +27,11 @@ async def open_pool(dsn: str, *, min_size: int = 1, max_size: int = 8) -> None:
         min_size=min_size,
         max_size=max_size,
         kwargs={"row_factory": dict_row, "autocommit": True},
+        # Checked before it is handed out: after Postgres restarts (an
+        # upgrade, a full disk) every pooled connection is dead, and without
+        # the check each one fails whatever uses it next — a deploy, marked
+        # failed with "server closed the connection unexpectedly".
+        check=AsyncConnectionPool.check_connection,
         open=False,
     )
     await _pool.open(wait=True)

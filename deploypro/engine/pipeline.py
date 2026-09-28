@@ -20,10 +20,10 @@ from deploypro.adapters import containers, source
 from deploypro.config import Settings
 from deploypro.domain import naming
 from deploypro.domain.detect import Overrides, detect
-from deploypro.domain.errors import DeployProError
+from deploypro.domain.errors import Conflict, DeployProError
 from deploypro.domain.models import Deployment, EnvTarget, LogStream, Project
 from deploypro.domain.repo_url import redact
-from deploypro.engine import environment, gitaccess, promote
+from deploypro.engine import environment, gitaccess, housekeeping, promote
 from deploypro.engine.launch import launch
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
@@ -63,6 +63,10 @@ async def run_deployment(deployment: Deployment, *, settings: Settings) -> Deplo
             f"{deployment.git_ref} at {deployment.git_sha[:8]} "
             f"({deployment.trigger.value})"
         )
+
+        full = await housekeeping.ensure_room(settings)
+        if full:
+            raise Conflict(full)
 
         app_dir = await _checkout(
             project, deployment, workdir=workdir, log=log, settings=settings
