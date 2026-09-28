@@ -148,3 +148,72 @@ class TestExecForm:
     def test_a_command_needing_a_shell_keeps_one_but_execs_through_it(self):
         rendered = _exec_form("node server.js | tee log")
         assert rendered.startswith('["/bin/sh", "-c", "exec ')
+
+
+def _caddyfile(plan) -> str | None:
+    return dict(plan.context_files).get("Caddyfile")
+
+
+def test_every_static_site_gets_the_baseline_security_headers(plan):
+    """A static site has no server to run a middleware in, and Next's
+    `headers()` does nothing under `output: 'export'`. If the platform does
+    not set these, nothing does — and a project arriving from a host that set
+    them in its own config file loses them without a single error."""
+    caddyfile = _caddyfile(plan)
+    if caddyfile is None:
+        return
+    for header in (
+        "X-Content-Type-Options nosniff",
+        "Referrer-Policy strict-origin-when-cross-origin",
+        "X-Frame-Options DENY",
+    ):
+        assert header in caddyfile
+
+
+def test_the_server_does_not_announce_itself(plan):
+    """Its name and version are of use to nobody but whoever is looking for
+    hosts running a version with a published bug."""
+    caddyfile = _caddyfile(plan)
+    if caddyfile is not None:
+        assert "-Server" in caddyfile
+
+
+def test_an_exported_site_serves_its_own_404_page(repo):
+    """Next writes `404.html` during export. Without this Caddy answers a
+    missing path with a bare status line and that page is never seen."""
+    caddyfile = _caddyfile(detect(repo(FIXTURES["next-export"])))
+    assert "handle_errors" in caddyfile
+    assert "/404.html" in caddyfile
+
+
+def test_a_single_page_app_has_no_error_handler(repo):
+    """Its fallback already matches every path, so nothing reaches an error
+    handler and one would only be dead configuration."""
+    caddyfile = _caddyfile(detect(repo(FIXTURES["vite"])))
+    assert "handle_errors" not in caddyfile
+
+
+def test_the_static_server_has_its_file_capabilities_stripped(plan):
+    """The caddy image sets cap_net_bind_service on its binary so a non-root
+    user can bind :80. Every container here runs with no-new-privileges, under
+    which the kernel refuses to exec a file that carries capabilities at all —
+    so the image the platform generates could not start its own web server.
+    The failure is `exec /usr/bin/caddy: operation not permitted`, which reads
+    like a corrupt image rather than a run-time flag, and it applied to every
+    static site the platform could build."""
+    if _caddyfile(plan) is None:
+        return
+    runtime = plan.dockerfile.split("AS run", 1)[1]
+    assert "setcap -r /usr/bin/caddy" in runtime
+    # Before USER: dropping a capability needs the privileges being dropped.
+    assert runtime.index("setcap -r") < runtime.index("USER ")
+
+
+def test_stripping_the_capability_leaves_nothing_behind(plan):
+    """Installed as a virtual package and removed again, so the runtime image
+    does not carry a package manager's worth of extra for a one-line fix."""
+    if _caddyfile(plan) is None:
+        return
+    runtime = plan.dockerfile.split("AS run", 1)[1]
+    assert "--virtual .setcap" in runtime
+    assert "apk del .setcap" in runtime
