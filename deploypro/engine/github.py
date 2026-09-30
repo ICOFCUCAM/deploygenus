@@ -27,7 +27,7 @@ from deploypro.adapters import github as api
 from deploypro.config import Settings
 from deploypro.domain import github as gh
 from deploypro.domain import naming
-from deploypro.domain.errors import Conflict, InvalidRequest, NotFound
+from deploypro.domain.errors import Conflict, GitHubError, InvalidRequest, NotFound
 from deploypro.domain.models import Project
 from deploypro.repositories import github as github_repo
 from deploypro.repositories import projects as project_repo
@@ -178,6 +178,14 @@ class Repository:
     installation_id: int
     #: The slug of the project already made from it, if there is one.
     project_slug: str | None = None
+    #: The branch an import offers as production: `main` when the repository
+    #: has one and GitHub's default is something else, otherwise the default.
+    #: Set by `find_repository` only; a listing leaves it empty.
+    suggested_branch: str = ""
+
+    @property
+    def production_branch(self) -> str:
+        return self.suggested_branch or self.default_branch
 
     @property
     def owner(self) -> str:
@@ -228,14 +236,39 @@ async def find_repository(
         raise NotFound("That GitHub installation is not connected to DeployPro")
     token = await installation_token(settings, installation_id)
     data = await api.get_repo(settings.github_api_url, token, full_name)
+    default = data.get("default_branch") or "main"
     return Repository(
         full_name=data["full_name"],
         private=bool(data.get("private")),
-        default_branch=data.get("default_branch") or "main",
+        default_branch=default,
         pushed_at=data.get("pushed_at") or "",
         html_url=data.get("html_url") or "",
         installation_id=installation_id,
+        suggested_branch=await _suggest_branch(
+            settings, token, data["full_name"], default
+        ),
     )
+
+
+async def _suggest_branch(
+    settings: Settings, token: str, full_name: str, default: str
+) -> str:
+    """`main`, if the repository has it and GitHub's default is another branch.
+
+    Regression (BalanceVid, September 2026): the repository's default branch on
+    GitHub was the feature branch it was first pushed from, so the import made
+    that branch production. `main` was created later, and merges to it only
+    ever deployed as previews. A default that is not `main`, beside a `main`
+    that exists, is far more often that accident than a choice.
+    """
+    if default == "main":
+        return default
+    try:
+        if await api.branch_exists(settings.github_api_url, token, full_name, "main"):
+            return "main"
+    except GitHubError:
+        pass  # a suggestion only: the import still works with the default
+    return default
 
 
 async def import_repository(
@@ -255,7 +288,7 @@ async def import_repository(
         slug=slug.strip() or naming.slugify(name or repo.name),
         name=name.strip() or repo.name,
         repo_url=gh.clone_url(repo.full_name, github_url=settings.github_url),
-        production_branch=branch.strip() or repo.default_branch,
+        production_branch=branch.strip() or repo.production_branch,
         root_directory=root_directory.strip(),
         memory_mb=memory_mb,
     )

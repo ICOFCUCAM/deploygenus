@@ -139,3 +139,13 @@ async def get_repo(api_url: str, token: str, full_name: str) -> dict:
     response = await _request("GET", f"{api_url}/repos/{full_name}", auth=_bearer(token))
     assert response is not None
     return response.json()
+
+
+async def branch_exists(api_url: str, token: str, full_name: str, branch: str) -> bool:
+    response = await _request(
+        "GET",
+        f"{api_url}/repos/{full_name}/branches/{branch}",
+        auth=_bearer(token),
+        allow_404=True,
+    )
+    return response is not None

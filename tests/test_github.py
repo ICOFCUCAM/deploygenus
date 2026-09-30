@@ -450,6 +450,27 @@ class TestImporting:
         response = await client.get("/projects/new?q=sho")
         assert "you/shop" in response.text and "you/notes" not in response.text
 
+    async def test_import_suggests_main_over_a_stray_default_branch(
+        self, client, connected, monkeypatch
+    ):
+        found = engine.Repository(
+            "you/vid", True, "claude/feature", "", "", 42, suggested_branch="main"
+        )
+        monkeypatch.setattr(engine, "find_repository", lambda *a: _async(found))
+        response = await client.get("/projects/new/github?repo=you/vid&installation=42")
+        assert 'name="production_branch" value="main"' in response.text
+        assert "Deploy main" in response.text
+        assert "default branch is" in response.text
+
+    async def test_import_keeps_a_main_default_without_a_note(
+        self, client, connected, monkeypatch
+    ):
+        found = engine.Repository("you/shop", True, "main", "", "", 42)
+        monkeypatch.setattr(engine, "find_repository", lambda *a: _async(found))
+        response = await client.get("/projects/new/github?repo=you/shop&installation=42")
+        assert 'name="production_branch" value="main"' in response.text
+        assert "default branch is" not in response.text
+
     async def test_importing_links_the_project_and_deploys_it(
         self, client, connected, monkeypatch
     ):
@@ -522,3 +543,44 @@ class TestPageTitle:
     async def test_the_title_is_plain_text_without_an_app(self, client, repos):
         response = await client.get("/projects/new")
         assert self.title(response.text) == "New project — DeployPro"
+
+
+class TestSuggestedBranch:
+    """Regression (BalanceVid, September 2026): GitHub's default branch was the
+    feature branch the repository was first pushed from, so the import made it
+    production and merges to `main` only ever deployed as previews."""
+
+    settings = SimpleNamespace(github_api_url="https://api.github.test")
+
+    async def suggest(self, monkeypatch, default, exists=None, raises=False):
+        asked = []
+
+        async def branch_exists(api_url, token, full_name, branch):
+            asked.append(branch)
+            if raises:
+                raise engine.GitHubError("GitHub said 500: down")
+            return branch in (exists or set())
+
+        monkeypatch.setattr(engine.api, "branch_exists", branch_exists)
+        chosen = await engine._suggest_branch(self.settings, "t", "you/vid", default)
+        return chosen, asked
+
+    async def test_main_is_suggested_when_it_exists(self, monkeypatch):
+        chosen, _ = await self.suggest(monkeypatch, "claude/feature", {"main"})
+        assert chosen == "main"
+
+    async def test_the_default_stands_when_there_is_no_main(self, monkeypatch):
+        chosen, _ = await self.suggest(monkeypatch, "master", set())
+        assert chosen == "master"
+
+    async def test_a_main_default_is_not_looked_up(self, monkeypatch):
+        chosen, asked = await self.suggest(monkeypatch, "main")
+        assert chosen == "main" and asked == []
+
+    async def test_github_failing_does_not_stop_the_import(self, monkeypatch):
+        chosen, _ = await self.suggest(monkeypatch, "develop", raises=True)
+        assert chosen == "develop"
+
+    def test_a_listing_offers_the_default(self):
+        repo = engine.Repository("you/vid", True, "develop", "", "", 42)
+        assert repo.production_branch == "develop"
