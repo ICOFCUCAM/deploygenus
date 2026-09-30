@@ -135,6 +135,19 @@ A deployment that succeeds is immutable. Superseded ones keep their images and
 have their containers reclaimed after `keep_warm`, so rolling back is a
 restart rather than a rebuild.
 
+**The queue.** Builds run one at a time. A queued build of a production
+branch goes before any queued preview; a build already running is never
+interrupted. When a branch gets a newer push (or **Deploy**) while an older
+build of it is still queued, the older one is cancelled and says which build
+replaced it. Redeploys and rollbacks name a commit on purpose and are never
+replaced.
+
+**Previews can be switched off** per project (Configuration → Build, or
+`deploypro project set <project> --previews off`). Pushes to other branches
+are then acknowledged and ignored, and only the production branch deploys on
+push. Useful when every change reaches production through a merge anyway,
+where each preview is the same build made twice.
+
 ## Setting it up
 
 **On a fresh Ubuntu or Debian server, one command does all of it:**

@@ -388,7 +388,9 @@ def detail_sentence(v: DeploymentView) -> str:
     if status is DeploymentStatus.DEPLOYING:
         return "Starting the container and checking it answers."
     if status is DeploymentStatus.CANCELLED:
-        return "Cancelled before it started building."
+        # Replaced by a newer commit: the engine says by which, and that is
+        # the more useful sentence (docs/design/proposal-build-queue.md §2).
+        return v.d.error or "Cancelled before it started building."
     if status is DeploymentStatus.FAILED:
         if v.production_branch:
             return "Production was not touched."

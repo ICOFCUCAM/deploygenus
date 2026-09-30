@@ -77,6 +77,10 @@
         <p class="hint" id="stop_hint">How long a replaced container gets to finish its work. Applies to the next replacement.</p>
       </div>
     </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" name="preview_deploys" value="1" aria-describedby="preview_hint"{% if project.preview_deploys %} checked{% endif %}> Deploy previews</label>
+      <p class="hint" id="preview_hint">A push to another branch builds a preview with its own address. Off: only pushes to <span class="mono">{{ project.production_branch }}</span> deploy. Takes effect on the next push.</p>
+    </div>
   </div>
 
   <div><button class="btn btn-primary" type="submit">Save</button></div>

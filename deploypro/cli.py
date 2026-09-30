@@ -277,12 +277,17 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
             ("memory_mb", args.memory),
             ("cpu_shares", args.cpus),
             ("keep_warm", args.keep_warm),
+            (
+                "preview_deploys",
+                None if args.previews is None else args.previews == "on",
+            ),
         )
         if value is not None
     }
     if not changes:
         raise DeployProError(
-            "Nothing to change — pass --stop-timeout, --memory, --cpus …"
+            "Nothing to change — pass --stop-timeout, --memory, --cpus, "
+            "--keep-warm or --previews"
         )
     for key, low, high in (
         ("stop_timeout_seconds", 1, 86400),
@@ -297,6 +302,7 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
     print(f"  stop timeout  {updated.stop_timeout_seconds}s")
     print(f"  memory        {updated.memory_mb} MB, {updated.cpu_shares:g} CPU")
     print(f"  kept warm     {updated.keep_warm}")
+    print(f"  previews      {'on' if updated.preview_deploys else 'off'}")
     print("  applies to containers started from now on — deploy to apply it")
 
 
@@ -839,6 +845,11 @@ def _parser() -> argparse.ArgumentParser:
     project_set.add_argument("--cpus", type=float, help="CPU limit, e.g. 2")
     project_set.add_argument(
         "--keep-warm", type=int, help="superseded deployments kept running"
+    )
+    project_set.add_argument(
+        "--previews",
+        choices=["on", "off"],
+        help="whether a push to another branch builds a preview",
     )
     project_set.set_defaults(handler=cmd_project_set)
     project_key = project.add_parser(

@@ -50,7 +50,7 @@ async def queue_deploy(
             except RuntimeError as exc:
                 raise InvalidRequest(_unreadable(project, str(exc))) from exc
 
-    return await deployment_repo.create(
+    deployment = await deployment_repo.create(
         project_id=project.id,
         short_id=naming.deployment_short_id(project.slug),
         git_sha=commit,
@@ -60,6 +60,18 @@ async def queue_deploy(
         git_author=author,
         rolled_back_from=rolled_back_from,
     )
+    # A newer commit replaces older ones still waiting for the same branch:
+    # building them would spend minutes on something superseded before it
+    # started (docs/design/proposal-build-queue.md §2).
+    if trigger in (DeploymentTrigger.PUSH, DeploymentTrigger.MANUAL):
+        for replaced in await deployment_repo.supersede_queued(deployment):
+            logger.info(
+                "cancelled %s #%s: replaced by #%s",
+                replaced.short_id,
+                replaced.number,
+                deployment.number,
+            )
+    return deployment
 
 
 def _unreadable(project: Project, detail: str) -> str:

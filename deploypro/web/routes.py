@@ -231,6 +231,7 @@ async def save_build(
     cpu_shares: Annotated[str, Form()] = "",
     keep_warm: Annotated[str, Form()] = "",
     stop_timeout_seconds: Annotated[str, Form()] = "",
+    preview_deploys: Annotated[str, Form()] = "",
 ):
     """Configuration → Build. Every field on the page, and only those.
 
@@ -255,6 +256,9 @@ async def save_build(
         "stop_timeout_seconds": min(
             max(_int(stop_timeout_seconds, project.stop_timeout_seconds), 1), 86400
         ),
+        # A checkbox: absent from the post means unticked. Safe here because
+        # this handler serves only the Build form, which always carries it.
+        "preview_deploys": preview_deploys == "1",
     }
     # An empty override means "go back to detecting it", which is a real
     # setting and not a missing field — so these are written as NULL.
@@ -270,7 +274,7 @@ async def save_build(
     return _redirect(
         back,
         ok="Saved. Build settings and resources apply to the next deploy; the "
-        "graceful shutdown time to the next replacement.",
+        "graceful shutdown time to the next replacement; previews to the next push.",
     )
 
 

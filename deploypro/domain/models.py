@@ -122,6 +122,9 @@ class Project:
     #: project needs neither a deploy key nor a webhook of its own.
     github_installation_id: int | None = None
     github_repo: str | None = None
+    #: Whether a push to another branch builds a preview. Off, only the
+    #: production branch deploys on push (docs/design/proposal-build-queue.md).
+    preview_deploys: bool = True
 
 
 @dataclass(frozen=True, slots=True)

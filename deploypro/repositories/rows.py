@@ -50,6 +50,7 @@ def to_project(row: dict[str, Any]) -> Project:
         updated_at=row["updated_at"],
         github_installation_id=row["github_installation_id"],
         github_repo=row["github_repo"],
+        preview_deploys=row["preview_deploys"],
     )
 
 

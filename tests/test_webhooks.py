@@ -69,6 +69,8 @@ class TestPushFiltering:
     def project(self):
         class P:
             slug = "blog"
+            production_branch = "main"
+            preview_deploys = True
 
         return P()
 
@@ -118,3 +120,43 @@ class TestPushFiltering:
         # Only the subject line, so a list view stays a list.
         assert queued[0]["message"] == "Fix the thing"
         assert queued[0]["author"] == "Ada"
+
+
+class TestPreviewsOff:
+    """docs/design/proposal-build-queue.md §3: with previews off, only the
+    production branch deploys on push, and the answer says why."""
+
+    @pytest.fixture
+    def queued(self, monkeypatch):
+        calls = []
+
+        async def fake_queue(project, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(short_id="vid-abc12345", number=8)
+
+        monkeypatch.setattr("deploypro.routers.webhooks.service.queue_deploy", fake_queue)
+        monkeypatch.setattr("deploypro.routers.webhooks._out", lambda *a, **k: None)
+        return calls
+
+    def project(self, previews):
+        return SimpleNamespace(
+            slug="vid", production_branch="main", preview_deploys=previews
+        )
+
+    def push(self, branch):
+        return {"ref": f"refs/heads/{branch}", "after": "d" * 40, "head_commit": {}}
+
+    async def test_a_push_to_another_branch_is_ignored_and_says_why(self, queued):
+        answer = await _handle_push(
+            self.project(False), self.push("claude/feature"), None
+        )
+        assert queued == []
+        assert "previews are off" in answer.ignored
+
+    async def test_production_still_deploys(self, queued):
+        await _handle_push(self.project(False), self.push("main"), None)
+        assert [c["ref"] for c in queued] == ["main"]
+
+    async def test_with_previews_on_other_branches_deploy(self, queued):
+        await _handle_push(self.project(True), self.push("claude/feature"), None)
+        assert [c["ref"] for c in queued] == ["claude/feature"]

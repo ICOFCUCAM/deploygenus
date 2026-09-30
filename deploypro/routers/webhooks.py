@@ -71,6 +71,13 @@ async def _handle_push(project: Project, payload: dict, settings) -> WebhookAcce
     if not sha or set(sha) == {"0"}:
         return WebhookAccepted(ignored=f"{branch} has no commit to build")
 
+    if branch != project.production_branch and not project.preview_deploys:
+        # Answered, so GitHub's delivery log says why nothing was built.
+        return WebhookAccepted(
+            ignored=f"{branch} is not {project.production_branch} and previews "
+            "are off for this project"
+        )
+
     head = payload.get("head_commit") or {}
     author = (head.get("author") or {}).get("name")
 
