@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from deploypro.domain.maintenance import parse_size
 from deploypro.domain.storage import Mount, draining_deadline, draining_name
 
 LogSink = Callable[[str], Awaitable[None]]
@@ -580,6 +581,22 @@ async def prune_build_cache(
             )
 
     return " | ".join(report for report in reports if report)
+
+
+async def build_cache_bytes() -> int | None:
+    """What BuildKit's cache takes on disk now, or None if Docker won't say."""
+    try:
+        out = await _capture(["system", "df", "--format", "{{json .}}"], timeout=120)
+    except DockerError:
+        return None
+    for line in out.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("Type") == "Build Cache":
+            return parse_size(str(row.get("Size", "")))
+    return None
 
 
 def _last_line(output: str) -> str:

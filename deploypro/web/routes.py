@@ -18,7 +18,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from deploypro.adapters import crypto
+from deploypro.adapters import crypto, notify
 from deploypro.config import Settings, get_settings
 from deploypro.deps import SettingsDep, token_matches
 from deploypro.domain import naming, session
@@ -43,6 +43,7 @@ from deploypro.engine import promote as promote_engine
 from deploypro.engine import routing, service, verify
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
+from deploypro.repositories import maintenance as maintenance_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
 from deploypro.repositories import volumes as volume_repo
@@ -647,6 +648,81 @@ async def cancel(request: Request, short_id: str):
         )
     await deployment_repo.mark_cancelled(deployment.id)
     return _redirect(f"/deployments/{short_id}", ok="Cancelled.")
+
+
+# ---------------------------------------------------------------------------
+# System: clean-up, backup, test alert, setup checklist
+# ---------------------------------------------------------------------------
+
+
+@router.post("/system/cleanup")
+async def request_cleanup(request: Request):
+    """Asks the worker; the dashboard never runs a clean-up itself (it must
+    run between deploys, and only the worker knows when that is)."""
+    signed_in(request)
+    try:
+        await maintenance_repo.request("cleanup")
+    except DeployProError as exc:
+        return _redirect("/system", err=exc.message)
+    return _redirect(
+        "/system",
+        ok="Clean-up started. This page shows what it removed when it finishes.",
+    )
+
+
+@router.post("/system/backup")
+async def request_backup(request: Request, settings: SettingsDep):
+    signed_in(request)
+    if settings.backup_dir is None:
+        return _redirect(
+            "/system",
+            err="Backups are off: set DEPLOYPRO_BACKUP_DIR in /opt/deploypro/.env.",
+        )
+    try:
+        await maintenance_repo.request("backup")
+    except DeployProError as exc:
+        return _redirect("/system", err=exc.message)
+    return _redirect(
+        "/system",
+        ok="Backup started. It takes a few minutes; this page shows it when it's done.",
+    )
+
+
+@router.post("/system/test-alert")
+async def send_test_alert(request: Request, settings: SettingsDep):
+    signed_in(request)
+    if not settings.alert_webhook_url:
+        return _redirect(
+            "/system", err="Alerts are off: set DEPLOYPRO_ALERT_WEBHOOK_URL first."
+        )
+    delivered = await notify.send(
+        settings.alert_webhook_url,
+        title="Test alert",
+        detail="If you can read this, DeployPro can reach you when something breaks.",
+        level="warning",
+    )
+    if not delivered:
+        return _redirect(
+            "/system",
+            err="The test alert was not accepted. Check DEPLOYPRO_ALERT_WEBHOOK_URL.",
+        )
+    return _redirect(
+        "/system", ok="Test alert sent. If it didn't arrive, check the webhook URL."
+    )
+
+
+@router.post("/system/setup/{item}")
+async def tick_setup(request: Request, item: str, done: Annotated[str, Form()] = "1"):
+    """The two setup steps only the owner can confirm."""
+    signed_in(request)
+    if item not in views.OWNER_TICKS:
+        return _redirect("/system", err="That is not a setup step you can tick.")
+    key = f"checklist:{item}"
+    if done == "1":
+        await maintenance_repo.set_state(key, {"done": True})
+    else:
+        await maintenance_repo.clear_state(key)
+    return _redirect("/system")
 
 
 # ---------------------------------------------------------------------------

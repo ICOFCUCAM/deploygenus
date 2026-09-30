@@ -27,10 +27,11 @@ from datetime import UTC, datetime
 
 from deploypro.adapters import db
 from deploypro.config import get_settings
-from deploypro.engine import backup, housekeeping, pipeline, processes, scheduler, service
+from deploypro.engine import backup, maintenance, pipeline, processes, scheduler, service
 from deploypro.engine.alerts import Alerts
 from deploypro.engine.monitor import Monitor
 from deploypro.repositories import deployments as deployment_repo
+from deploypro.repositories import maintenance as maintenance_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
 
@@ -65,6 +66,10 @@ HOUSEKEEPING_INTERVAL_SECONDS = 3600.0
 #: How often to ask "is it the backup hour, and is today's backup missing?".
 BACKUP_CHECK_INTERVAL_SECONDS = 60.0
 
+#: How often to look for a clean-up or backup asked for on the System page,
+#: and for runs whose worker stopped under them.
+MAINTENANCE_CHECK_INTERVAL_SECONDS = 5.0
+
 #: Concurrent scheduled jobs per worker. Three rather than one so a slow
 #: nightly job does not delay every other project's, and rather than many
 #: because each one is a container competing for the same host.
@@ -87,6 +92,7 @@ class Worker:
         self._last_drain_sweep = 0.0
         self._last_monitor = 0.0
         self._last_backup_check = 0.0
+        self._last_maintenance_check = 0.0
         # Not zero: the first tidy-up waits an hour, so a worker restarted in
         # a loop is not also sweeping images in a loop.
         self._last_housekeeping = time.monotonic()
@@ -126,6 +132,10 @@ class Worker:
             logger.info("worker %s stopped", self._id)
 
     async def _startup_reconcile(self) -> None:
+        try:
+            await maintenance.publish_backups(self._settings)
+        except Exception:  # noqa: BLE001 - the System page's facts, never fatal
+            logger.exception("could not read the backup directory")
         report = await service.reconcile(self._settings)
         logger.info(
             "reconciled with docker: %s container(s) gone, %s abandoned "
@@ -172,8 +182,16 @@ class Worker:
 
     async def _deploy_once(self) -> None:
         await self._reclaim()
+        # A clean-up asked for on the System page runs here, between deploys,
+        # for the reason the hourly one does (deploypro.engine.housekeeping).
+        requested = await maintenance_repo.claim("cleanup", worker=self._id)
+        if requested is not None:
+            await self._cleanup(requested)
         deployment = await deployment_repo.claim_next(self._id)
         if deployment is None:
+            # Idle is between deploys too. Checked here as well as after a
+            # deploy, so a host nobody deploys to is still tidied hourly.
+            await self._housekeeping()
             await self._idle()
             return
 
@@ -223,7 +241,17 @@ class Worker:
         if now - self._last_housekeeping < HOUSEKEEPING_INTERVAL_SECONDS:
             return
         self._last_housekeeping = now
-        report = await housekeeping.run(self._settings)
+        run = await maintenance_repo.begin("cleanup", origin="schedule", worker=self._id)
+        if run is None:
+            return  # one asked for on the System page is already running
+        await self._cleanup(run)
+
+    async def _cleanup(self, run) -> None:
+        try:
+            report = await maintenance.run_cleanup(self._settings, run)
+        except Exception:  # noqa: BLE001 - recorded on the run; the loop goes on
+            logger.exception("clean-up failed")
+            return
         logger.info("housekeeping: %s", report)
 
     # -- scheduled jobs -----------------------------------------------------
@@ -245,6 +273,12 @@ class Worker:
             "_last_backup_check",
             "backup",
             self._backup,
+        )
+        self._every(
+            MAINTENANCE_CHECK_INTERVAL_SECONDS,
+            "_last_maintenance_check",
+            "maintenance",
+            self._maintenance_requests,
         )
 
         if len(self._jobs) >= JOB_CONCURRENCY:
@@ -345,14 +379,25 @@ class Worker:
         now = datetime.now(UTC)
         if now.hour != settings.backup_hour or backup.taken_today(settings.backup_dir):
             return
+        run = await maintenance_repo.begin("backup", origin="schedule", worker=self._id)
+        if run is None:
+            return  # one asked for on the System page is already running
         logger.info("taking the daily backup into %s", settings.backup_dir)
+        await self._take_backup(run)
+
+    async def _maintenance_requests(self) -> None:
+        """A backup asked for on the System page, and runs left open by a
+        worker that stopped. Clean-ups are claimed on the deploy loop."""
+        await maintenance_repo.abandon_stale()
+        run = await maintenance_repo.claim("backup", worker=self._id)
+        if run is not None:
+            logger.info("taking a backup asked for on the System page")
+            await self._take_backup(run)
+
+    async def _take_backup(self, run) -> None:
         try:
-            result = await backup.take(
-                settings, settings.backup_dir, keep=settings.backup_keep
-            )
-        except backup.BackupSkipped:
-            return
-        except Exception as exc:
+            await maintenance.run_backup(self._settings, run)
+        except Exception as exc:  # noqa: BLE001 - recorded on the run, and alerted
             logger.exception("backup failed")
             await self._alerts.event(
                 title="Backup failed",
@@ -360,13 +405,7 @@ class Worker:
                 level="critical",
             )
             return
-        logger.info(
-            "backup written: %s (%s volume(s), %.1f MB, %s old removed)",
-            result.path.name,
-            len(result.volumes),
-            result.bytes / 1e6,
-            len(result.removed),
-        )
+        logger.info("backup written into %s", self._settings.backup_dir)
 
     async def _drain_jobs(self) -> None:
         """Let running jobs finish before the pool closes under them."""

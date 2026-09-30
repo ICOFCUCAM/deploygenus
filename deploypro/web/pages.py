@@ -9,6 +9,7 @@ post to live in `deploypro.web.routes` and return here.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -22,6 +23,7 @@ from deploypro.domain.storage import docker_volume_name
 from deploypro.engine import processes as process_engine
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import github as github_repo
+from deploypro.repositories import maintenance as maintenance_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
 from deploypro.repositories import volumes as volume_repo
@@ -592,10 +594,37 @@ async def system_page(
     request: Request, settings: SettingsDep, ok: str = "", err: str = ""
 ):
     signed_in(request)
-    from deploypro.engine import github
+    from deploypro.engine import disks, github
 
+    now = datetime.now(UTC)
     app = await github_repo.get_app()
     installations = await github_repo.list_installations() if app else []
+
+    open_cleanup, last_cleanup = await maintenance_repo.latest("cleanup")
+    open_backup, last_backup = await maintenance_repo.latest("backup")
+    backup_state = await maintenance_repo.get_state("backups")
+    backup_view = views.backups(
+        backup_state,
+        open_backup,
+        last_backup,
+        enabled=settings.backup_dir is not None,
+        hour=settings.backup_hour,
+        now=now,
+    )
+    disk_facts = [
+        views.disk_fact(
+            disk,
+            alert_percent=settings.disk_alert_percent,
+            min_free_gb=settings.min_free_gb,
+        )
+        for disk in disks.measure(settings)
+    ]
+    setup = views.setup_items(
+        await maintenance_repo.get_states("checklist:"),
+        alerts_on=bool(settings.alert_webhook_url),
+        backup_exists=bool(backup_state and backup_state.get("newest")),
+        backup_dir=str(settings.backup_dir or ""),
+    )
     return render(
         request,
         "system.html",
@@ -605,6 +634,21 @@ async def system_page(
             "installations": installations,
             "install_url": github.install_url(app) if app else "",
             "settings_rows": _settings_rows(settings),
+            "setup": setup,
+            "setup_left": sum(1 for item in setup if not item.done),
+            "disk_facts": disk_facts,
+            "cache_fact": views.cache_fact(
+                await maintenance_repo.get_state("build_cache"),
+                cap_gb=settings.build_cache_max_gb,
+            ),
+            "cleanup_fact": views.cleanup_fact(open_cleanup, last_cleanup, now),
+            "cleanup_running": open_cleanup is not None,
+            "backups": backup_view,
+            "alerts_fact": views.alerts_fact(settings.alert_webhook_url),
+            "alerts_on": bool(settings.alert_webhook_url),
+            # Phase 3 Q-S2, extended to this page (proposal D2): it refreshes
+            # itself only while a clean-up or backup is running.
+            "refresh": open_cleanup is not None or open_backup is not None,
             "ok": ok,
             "err": err,
         },

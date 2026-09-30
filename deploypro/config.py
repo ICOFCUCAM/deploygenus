@@ -128,8 +128,16 @@ class Settings:
     #: log of whatever is serving production.
     log_retention_days: int = 30
 
-    #: Alert when the disk holding the build root is fuller than this.
+    #: Alert when the disk holding the build root, or the one holding the
+    #: images, is fuller than this.
     disk_alert_percent: int = 90
+
+    #: Where Docker keeps its images, as mounted into DeployPro's containers
+    #: (read-only; only its free space is read). On a single-disk host it is
+    #: the same disk as the build root and nothing extra is shown. It matters
+    #: once the image store is moved to its own disk: without it, that disk
+    #: could fill with no alert and no check before a build.
+    image_store_dir: Path | None = None
 
     #: Seconds between checks of every production site and worker. A site is
     #: reported down after two failed checks in a row.
@@ -229,6 +237,9 @@ def get_settings() -> Settings:
         log_retention_days=max(_int("DEPLOYPRO_LOG_RETENTION_DAYS", 30), 1),
         disk_alert_percent=min(max(_int("DEPLOYPRO_DISK_ALERT_PERCENT", 90), 1), 100),
         monitor_interval_seconds=max(_int("DEPLOYPRO_MONITOR_INTERVAL", 60), 1),
+        image_store_dir=Path(
+            _optional("DEPLOYPRO_IMAGE_STORE_DIR", "/var/lib/deploypro/image-store")
+        ),
         backup_dir=(
             Path(os.environ["DEPLOYPRO_BACKUP_DIR"])
             if os.environ.get("DEPLOYPRO_BACKUP_DIR")

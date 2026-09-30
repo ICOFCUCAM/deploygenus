@@ -468,6 +468,8 @@ p { margin: 0; }
   align-items: start;
 }
 .item-name { font-weight: 600; overflow-wrap: anywhere; }
+.item-setup { grid-template-columns: 7rem minmax(0, 1fr) auto; }
+.item-setup .item-name { font-weight: 400; }
 .item-body { display: grid; gap: 3px; font-size: 0.875rem; min-width: 0; }
 .item-body .mono { overflow-wrap: anywhere; }
 .item-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; justify-content: flex-end; }

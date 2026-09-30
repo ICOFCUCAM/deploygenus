@@ -160,6 +160,7 @@ def repos(monkeypatch):
         "deploypro.repositories.github.list_installations",
         lambda: _async(state.get("installations", [])),
     )
+    install_maintenance(monkeypatch, state)
     return state
 
 
@@ -819,3 +820,56 @@ class TestProductionMarker:
         response = await client.get("/projects/blog/deployments")
         assert self.marked(response.text) == []
         assert "Current production" not in response.text
+
+
+def install_maintenance(monkeypatch, state):
+    """maintenance_runs and system_state, in memory."""
+    from datetime import UTC, datetime
+
+    from deploypro.domain.errors import Conflict
+    from deploypro.domain.maintenance import MaintenanceRun
+    from deploypro.repositories import maintenance as repo
+
+    state["maintenance"] = []
+    state["system"] = {}
+
+    async def request(kind):
+        if any(r.kind == kind and r.open for r in state["maintenance"]):
+            raise Conflict(f"A {repo.WORDS[kind]} is already running.")
+        run = MaintenanceRun(
+            len(state["maintenance"]) + 1,
+            kind,
+            "dashboard",
+            "requested",
+            datetime.now(UTC),
+        )
+        state["maintenance"].append(run)
+        return run
+
+    async def latest(kind):
+        runs = [r for r in state["maintenance"] if r.kind == kind]
+        open_run = next((r for r in runs if r.open), None)
+        done = [r for r in runs if not r.open]
+        return open_run, (done[-1] if done else None)
+
+    async def get_state(key):
+        return state["system"].get(key)
+
+    async def get_states(prefix):
+        return {k: v for k, v in state["system"].items() if k.startswith(prefix)}
+
+    async def set_state(key, value):
+        state["system"][key] = value
+
+    async def clear_state(key):
+        state["system"].pop(key, None)
+
+    for name, fn in {
+        "request": request,
+        "latest": latest,
+        "get_state": get_state,
+        "get_states": get_states,
+        "set_state": set_state,
+        "clear_state": clear_state,
+    }.items():
+        monkeypatch.setattr(repo, name, fn)

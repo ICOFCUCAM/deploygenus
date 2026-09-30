@@ -12,6 +12,43 @@
 </div>
 {{ message(ok, err) }}
 
+{% macro fact_rows(facts) -%}
+  {% for f in facts %}
+    <dt>{{ f.label }}</dt>
+    <dd>{% if f.mark %}{{ status(f.mark) }} {% endif %}{{ f.text }}{% if f.note %}<br><span class="muted small">{{ f.note }}</span>{% endif %}</dd>
+  {% endfor %}
+{%- endmacro %}
+
+<section class="section" aria-labelledby="setup">
+  <h2 id="setup">Setup</h2>
+  {% if setup_left %}
+    <p class="section-lead">{{ setup_left }} of {{ setup|length }} left. Each one is what stands between a bad day and a lost server.</p>
+  {% else %}
+    <p class="section-lead">All {{ setup|length }} done.</p>
+  {% endif %}
+  <details class="setup"{% if setup_left %} open{% endif %}>
+    <summary>{% if setup_left %}The steps{% else %}Show the steps{% endif %}</summary>
+    <ul class="rows">
+      {% for item in setup %}
+      <li class="item item-setup">
+        <span class="item-name">{{ status({'shape': 'ready' if item.done else 'queued', 'word': 'Done' if item.done else 'To do', 'tone': 'success' if item.done else 'neutral'}) }}</span>
+        <div class="item-body">
+          <span>{{ item.label }}</span>
+          {% if not item.done %}<span class="muted">{{ item.how }}</span>{% if item.command %}<span class="mono">{{ item.command }}</span>{% endif %}{% endif %}
+        </div>
+        <div class="item-actions">
+          {% if item.ticked_by_owner %}
+          <form method="post" action="/system/setup/{{ item.key }}">
+            <button class="btn btn-quiet btn-small" type="submit" name="done" value="{{ '0' if item.done else '1' }}">{{ 'Undo' if item.done else 'I’ve done this' }}</button>
+          </form>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+</section>
+
 <section class="section" aria-labelledby="github">
   <h2 id="github">GitHub App</h2>
   {% if not app %}
@@ -34,6 +71,43 @@
     {% if not installations %}
       <div style="margin-top:12px"><a class="btn btn-primary" href="{{ install_url }}" rel="noreferrer">Install on GitHub</a></div>
     {% endif %}
+  {% endif %}
+</section>
+
+<section class="section" aria-labelledby="disk">
+  <h2 id="disk">Disk and backups</h2>
+
+  <dl class="facts" style="margin-top:12px">
+    {% if disk_facts %}{{ fact_rows(disk_facts) }}{% else %}
+    <dt>Disk</dt><dd>{{ status({'shape': 'caution', 'word': 'Can’t read', 'tone': 'caution'}) }}</dd>
+    {% endif %}
+    {{ fact_rows([cache_fact, cleanup_fact]) }}
+  </dl>
+  {% if not cleanup_running %}
+  <form class="actions" style="margin-top:12px" method="post" action="/system/cleanup">
+    <button class="btn" type="submit">Clean up now</button>
+    <span class="hint">Removes only what nothing needs: old images beyond rollback, build cache over its cap, leftover build folders and old logs.</span>
+  </form>
+  {% endif %}
+
+  <dl class="facts" style="margin-top:24px">
+    {{ fact_rows(backups.facts) }}
+  </dl>
+  {% if backups.can_start %}
+  <form class="actions" style="margin-top:12px" method="post" action="/system/backup">
+    {# Proposal D3: the page's primary action when there is no recent backup,
+       unless Connect GitHub already is. #}
+    <button class="btn{% if backups.needed and app %} btn-primary{% endif %}" type="submit">Back up now</button>
+  </form>
+  {% endif %}
+
+  <dl class="facts" style="margin-top:24px">
+    {{ fact_rows([alerts_fact]) }}
+  </dl>
+  {% if alerts_on %}
+  <form class="actions" style="margin-top:12px" method="post" action="/system/test-alert">
+    <button class="btn" type="submit">Send test alert</button>
+  </form>
   {% endif %}
 </section>
 

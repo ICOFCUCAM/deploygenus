@@ -1,6 +1,11 @@
 # DeployPro — Proposal: Disk and backups on the System page
 
-**Status:** **PROPOSED 2026-09-28. Not locked, not implemented.** For the owner's decision (§6).
+**Status:** **APPROVED 2026-09-30 and implemented.** The owner approved it with the recommended answer to each decision in §6 (D1–D4), together with a setup checklist on the same page (§8).
+
+**Differences from the text below, made while building it:**
+- The refresh while a run is going (D2) uses the dashboard's existing 15 s interval, not 10 s.
+- A running request is shown as *waiting for the worker* until the worker picks it up.
+- The hourly clean-up now also runs when the worker is idle. Before this, it only ran after a deploy, so a host nobody deployed to was never tidied.
 **Builds on (locked, not reopened):**
 - `deploypro-phase5-page-layouts.md` §6: System → Settings. Item 4 already reserves *"Checks: `doctor`, test alert, manual backup. Absent until **[small]**."* This proposal fills that slot. It does not add a page, a route or a navigation item.
 - `deploypro-phase3-ux-states.md`: §12 (form messages), Q-S2 (auto-refresh)
@@ -160,3 +165,21 @@ All three are ordinary `POST` forms that redirect back to `/system` with `?ok=` 
   - the refresh is present only while running
   - the webhook URL never appears in the page
   - the E2 guard fails a build when the image disk, not the server disk, is short
+
+
+---
+
+## 8. Setup checklist (added at approval)
+
+This goes at the top of the System page. It lists four steps:
+
+| Step | Done when |
+|---|---|
+| Master key saved in a password manager | the owner ticks it (DeployPro can't see a password manager) |
+| Alerts on | `DEPLOYPRO_ALERT_WEBHOOK_URL` is set |
+| A backup taken | the backup directory holds a complete backup |
+| Backups copied off this server | the owner ticks it (DeployPro can't see the other storage) |
+
+- A step that isn't done shows what to do, with the command to run in Mono.
+- Ticked steps can be undone.
+- When all four are done, the list folds away behind *Show the steps*.

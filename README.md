@@ -563,6 +563,20 @@ that is not enough the deployment fails with a message saying the disk is
 full. Letting the build fill the disk would take Postgres down with it, and
 every deploy after would fail with a database error instead.
 
+**Images on their own disk.** If Docker's images live on a separate disk (a
+Hetzner Volume mounted over `/var/lib/containerd`, say), DeployPro watches
+that disk too: the check before a build, the disk alert, `deploypro doctor`
+and the System page all cover both. It reads the image store's free space
+through a read-only mount of `DEPLOYPRO_IMAGE_STORE_HOST_DIR`
+(`/var/lib/containerd` by default, where Docker 29 keeps images; set it to
+`/var/lib/docker` for Docker's older image store). On a single-disk server
+nothing changes.
+
+**From the dashboard.** The System page shows each disk, the build cache, the
+last cleanup and backup, and whether alerts are on, with **Clean up now**,
+**Back up now** and **Send test alert**. The dashboard asks the worker; it
+never runs either itself. A cleanup runs between deploys, like the hourly one.
+
 It only touches images this installation built, identified by a
 `deploypro.instance` label. A second DeployPro on the same Docker host, such as a
 staging copy or the end-to-end run, cannot clean away the first one's rollback
