@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import urlencode, urlsplit
 
@@ -235,8 +236,17 @@ async def unlink_project(request: Request, slug: str):
     )
 
 
-async def new_project_context(settings, q: str = "") -> dict:
+#: The New project page's filters: visibility, then sort order.
+VISIBILITIES = ("all", "private", "public")
+SORTS = {"pushed": "Recently pushed", "name": "Name"}
+
+
+async def new_project_context(
+    settings, q: str = "", vis: str = "all", sort: str = "pushed"
+) -> dict:
     """What the New project page shows above the manual form."""
+    vis = vis if vis in VISIBILITIES else "all"
+    sort = sort if sort in SORTS else "pushed"
     app = await github.get_app()
     context: dict = {
         "app": app,
@@ -244,6 +254,11 @@ async def new_project_context(settings, q: str = "") -> dict:
         "repos": [],
         "repo_error": "",
         "q": q,
+        "vis": vis,
+        "sort": sort,
+        "sorts": SORTS,
+        "counts": {"all": 0, "private": 0, "public": 0},
+        "pushed": {},
     }
     if app is None:
         return context
@@ -258,5 +273,39 @@ async def new_project_context(settings, q: str = "") -> dict:
         needle = q.strip().lower()
         if needle:
             repos = [r for r in repos if needle in r.full_name.lower()]
+        private = sum(1 for r in repos if r.private)
+        context["counts"] = {
+            "all": len(repos),
+            "private": private,
+            "public": len(repos) - private,
+        }
+        if vis != "all":
+            repos = [r for r in repos if r.private == (vis == "private")]
+        if sort == "name":
+            repos = sorted(repos, key=lambda r: r.full_name.lower())
+        now = datetime.now(UTC)
+        context["pushed"] = {r.full_name: pushed_ago(r.pushed_at, now) for r in repos}
         context["repos"] = repos
     return context
+
+
+def pushed_ago(pushed_at: str, now: datetime) -> str:
+    """GitHub's ISO time as "2 hours ago"; empty when it isn't one."""
+    try:
+        moment = datetime.fromisoformat(pushed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    seconds = max(0, (now - moment).total_seconds())
+    for size, unit in (
+        (31536000, "year"),
+        (2592000, "month"),
+        (86400, "day"),
+        (3600, "hour"),
+        (60, "minute"),
+    ):
+        if seconds >= size:
+            n = int(seconds // size)
+            return f"{n} {unit}{'s' if n != 1 else ''} ago"
+    return "just now"

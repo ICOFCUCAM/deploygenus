@@ -1,66 +1,134 @@
 {% extends "base.html" %}
-{% from "_macros.html" import message %}
+{% from "_macros.html" import message, icon, shape %}
 {% block title %}New project — DeployPro{% endblock %}
 {% block crumb %}New project{% endblock %}
 {% block content %}
+{%- macro np_url(v, so) -%}
+/projects/new?{% if q %}q={{ q | urlencode }}&amp;{% endif %}vis={{ v }}&amp;sort={{ so }}
+{%- endmacro %}
+{% set connected = app and installations %}
 <p class="crumbs"><a href="/">Projects</a> › New project</p>
-<div class="head"><div class="head-main"><h1>New project</h1></div></div>
+<div class="head">
+  <div class="head-main">
+    <h1>New project</h1>
+    <p class="head-sub">Import a repository from GitHub and deploy it to your infrastructure.</p>
+  </div>
+</div>
 {{ message(ok, err) }}
 
-<section aria-labelledby="import">
-  <h2 id="import">Import from GitHub</h2>
-  {% if not app %}
-    <p class="section-lead">Connect GitHub once, and every repository you allow shows up here with an Import button. Pushes then deploy by themselves, private repositories included, with no deploy keys or webhooks to set up.</p>
-    <div style="margin-top:16px"><a class="btn btn-primary" href="/github/connect">Connect GitHub</a></div>
+<div class="np-grid">
+<div class="np-main">
 
-  {% elif not installations %}
-    <p class="section-lead">The GitHub App <span class="mono">{{ app.slug }}</span> exists but isn’t installed. Install it on your account and pick the repositories DeployPro may read.</p>
-    <div style="margin-top:16px"><a class="btn btn-primary" href="{{ install_url }}" rel="noreferrer">Install on GitHub</a></div>
-
-  {% else %}
-    <form method="get" action="/projects/new" class="fields-inline" style="margin-top:16px;max-width:560px">
-      <div class="field">
-        <label for="q" class="visually-hidden">Search repositories</label>
-        <input type="text" id="q" name="q" value="{{ q }}" placeholder="Search repositories">
-      </div>
-      <button class="btn btn-secondary" type="submit">Search</button>
-    </form>
-    {% if repo_error %}
-      <div class="message tone-failure" role="alert" style="margin-top:16px"><p>Couldn’t reach GitHub: {{ repo_error }}</p></div>
-      <p class="section-lead">You can still deploy from a Git URL below.</p>
-    {% elif not repos %}
-      <p class="section-lead">
-        {% if q %}No repository matches “{{ q }}”.{% else %}The app can’t see any repositories yet. <a href="{{ install_url }}" rel="noreferrer">Choose some on GitHub</a>.{% endif %}
-      </p>
+<section class="card np-github" aria-labelledby="import">
+  <h2 id="import" class="visually-hidden">Import from GitHub</h2>
+  <div class="np-account">
+    <span class="np-account-icon">{{ icon('github') }}</span>
+    <div class="np-account-text">
+    {% if not app %}
+      <p class="np-account-name">GitHub not connected</p>
+      <p class="muted">Connect GitHub once, and every repository you allow shows up here with an Import button. Pushes then deploy by themselves, private repositories included, with no deploy keys or webhooks to set up.</p>
+    {% elif not installations %}
+      <p class="np-account-name">GitHub App not installed</p>
+      <p class="muted">The GitHub App <span class="mono">{{ app.slug }}</span> exists but isn’t installed. Install it on your account and pick the repositories DeployPro may read.</p>
     {% else %}
-      <ul class="rows" style="margin-top:12px" aria-label="Repositories">
-        {% for repo in repos[:50] %}
-        <li class="item">
-          <span class="item-name">{{ repo.full_name }}</span>
-          <div class="item-body muted">
-            <span>{{ repo.default_branch }}{% if repo.private %} · private{% endif %}{% if repo.pushed_at %} · pushed {{ repo.pushed_at[:10] }}{% endif %}</span>
-          </div>
-          <div class="item-actions">
-            {% if repo.project_slug %}
-              <a class="btn btn-small" href="/projects/{{ repo.project_slug }}">Open</a>
-            {% else %}
-              <a class="btn btn-small btn-primary"
-                 href="/projects/new/github?repo={{ repo.full_name | urlencode }}&installation={{ repo.installation_id }}">Import</a>
-            {% endif %}
-          </div>
-        </li>
-        {% endfor %}
-      </ul>
-      {% if repos | length > 50 %}
-        <p class="section-lead">Showing 50 of {{ repos | length }}. Search to find the rest.</p>
-      {% endif %}
-      <p class="section-lead"><a href="{{ install_url }}" rel="noreferrer">Choose repositories on GitHub</a></p>
+      <p class="np-account-name"><span class="pill tone-success">{{ shape('ready') }}GitHub connected</span></p>
+      <p class="muted">Connected as <strong class="np-login">{{ installations | map(attribute='account_login') | join(', ') }}</strong></p>
     {% endif %}
+    </div>
+    <div class="np-account-action">
+    {% if not app %}
+      <a class="btn btn-primary" href="/github/connect">{{ icon('github') }}Connect GitHub</a>
+    {% elif not installations %}
+      <a class="btn btn-primary" href="{{ install_url }}" rel="noreferrer">Install on GitHub</a>
+    {% else %}
+      <a class="with-icon" href="{{ install_url }}" rel="noreferrer">Change account {{ icon('chevron') }}</a>
+    {% endif %}
+    </div>
+  </div>
+  {% if connected %}
+  <form method="get" action="/projects/new" class="np-search" role="search">
+    <label for="q" class="visually-hidden">Search repositories</label>
+    <div class="np-search-box">
+      {{ icon('search') }}
+      <input type="text" id="q" name="q" value="{{ q }}" placeholder="Search repositories…">
+    </div>
+    <input type="hidden" name="vis" value="{{ vis }}">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <button class="btn btn-primary" type="submit">Search</button>
+  </form>
   {% endif %}
 </section>
 
-<section class="section" id="from-url" aria-labelledby="url">
-  <h2 id="url">Deploy from a Git URL</h2>
+{% if connected %}
+<section class="card np-repos" aria-labelledby="repos-h">
+  <h2 id="repos-h" class="visually-hidden">Repositories</h2>
+  {% if repo_error %}
+    <div class="message tone-failure" role="alert"><p>Couldn’t reach GitHub: {{ repo_error }}</p></div>
+    <p class="section-lead">You can still deploy from a Git URL below.</p>
+  {% else %}
+  <div class="np-toolbar">
+    <nav class="np-filters" aria-label="Visibility">
+      {% for v in ['all', 'private', 'public'] %}
+      <a href="{{ np_url(v, sort) }}"{% if vis == v %} aria-current="true"{% endif %}>{{ v | capitalize }} <span class="np-count">{{ counts[v] }}</span></a>
+      {% endfor %}
+    </nav>
+    <nav class="np-sort" aria-label="Sort">
+      <span class="muted">Sort:</span>
+      {% for key, label in sorts.items() %}
+      <a href="{{ np_url(vis, key) }}"{% if sort == key %} aria-current="true"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+  </div>
+  {% if not repos %}
+    <p class="section-lead">
+      {% if q %}No repository matches “{{ q }}”.{% elif counts['all'] %}No {{ vis }} repository.{% else %}The app can’t see any repositories yet. <a href="{{ install_url }}" rel="noreferrer">Choose some on GitHub</a>.{% endif %}
+    </p>
+  {% else %}
+  <div class="dtable-wrap">
+  <table class="dtable np-table">
+    <thead><tr><th scope="col">Repository</th><th scope="col">Branch</th><th scope="col">Visibility</th><th scope="col">Last push</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+    {% for repo in repos[:50] %}
+    <tr>
+      <td>
+        <div class="np-repo">
+          <span class="np-repo-icon">{{ icon('github') }}</span>
+          <div class="np-repo-text">
+            <span class="np-repo-name">{{ repo.name }}</span>
+            <span class="np-repo-full muted">{{ repo.full_name }}</span>
+          </div>
+        </div>
+      </td>
+      <td><span class="pill">{{ icon('branch') }}{{ repo.suggested_branch or repo.default_branch }}</span></td>
+      <td>{% if repo.private %}<span class="np-vis np-private">{{ icon('lock') }}Private</span>{% else %}<span class="np-vis">{{ icon('globe') }}Public</span>{% endif %}</td>
+      <td class="muted">{{ pushed[repo.full_name] }}</td>
+      <td>
+        <div class="np-actions">
+        {% if repo.project_slug %}
+          <a class="btn btn-small" href="/projects/{{ repo.project_slug }}">Open project</a>
+        {% else %}
+          <a class="btn btn-small btn-primary"
+             href="/projects/new/github?repo={{ repo.full_name | urlencode }}&installation={{ repo.installation_id }}">Import</a>
+        {% endif %}
+        {% if repo.html_url %}<a class="btn btn-small" href="{{ repo.html_url }}" rel="noreferrer" target="_blank">Open {{ icon('external') }}<span class="visually-hidden"> {{ repo.full_name }} on GitHub</span></a>{% endif %}
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="card-foot muted">
+    {% if repos | length > 50 %}Showing 50 of {{ repos | length }}. Search to find the rest. · {% endif %}
+    Missing one? <a href="{{ install_url }}" rel="noreferrer">Choose repositories on GitHub</a>
+  </p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card" id="from-url" aria-labelledby="url">
+  <h2 id="url" class="card-title">{{ icon('code') }}Deploy from a Git URL</h2>
   <form class="form" method="post" action="/projects/new" style="margin-top:16px">
     <div class="field">
       <label for="name">Name</label>
@@ -93,10 +161,40 @@
       </div>
     </div>
     <div class="actions">
-      <button class="btn {{ 'btn-secondary' if app and installations else 'btn-primary' }}" type="submit">Create project</button>
+      <button class="btn {{ 'btn-secondary' if connected else 'btn-primary' }}" type="submit">Create project</button>
       <a class="btn btn-quiet" href="/">Cancel</a>
     </div>
   </form>
   <p class="section-lead small">DeployPro detects the application’s framework automatically from the repository’s files. If the repository has a <span class="mono">Dockerfile</span>, it is used as it is.</p>
 </section>
+
+</div>
+
+<aside class="np-aside">
+  <section class="card np-steps" aria-labelledby="steps-h">
+    <h2 id="steps-h" class="card-title">{{ icon('deploy') }}Deploy from repository</h2>
+    <ol class="np-steplist">
+      {% set steps = [
+        ('Connect your GitHub account', 'Allow DeployPro to read the repositories you choose.'),
+        ('Select a repository', 'Pick the one to import from the list.'),
+        ('Configure and deploy', 'Check the branch and build settings, then deploy.'),
+      ] %}
+      {% set at = 1 if connected else 0 %}
+      {% for title, text in steps %}
+      <li class="{{ 'done' if loop.index0 < at else ('now' if loop.index0 == at else '') }}">
+        <span class="np-stepnum">{% if loop.index0 < at %}{{ icon('check') }}{% else %}{{ loop.index }}{% endif %}</span>
+        <div><p class="np-steptitle">{{ title }}</p><p class="muted">{{ text }}</p></div>
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  <section class="card np-other" aria-labelledby="other-h">
+    <h2 id="other-h" class="card-title">{{ icon('code') }}Not on GitHub?</h2>
+    <p class="muted">Any Git repository the server can clone works too.</p>
+    <p class="card-foot"><a class="with-icon" href="#from-url">Deploy from a Git URL {{ icon('chevron') }}</a></p>
+  </section>
+</aside>
+</div>
+
+
 {% endblock %}
