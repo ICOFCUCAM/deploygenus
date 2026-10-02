@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import status, shape, icon, message, action, line %}
+{% from "_macros.html" import status, shape, icon, message, action %}
 {% block title %}{{ project.name }} — DeployPro{% endblock %}
 {% block content %}
 {# The project header and tabs come from base.html. Below them, the
@@ -32,6 +32,9 @@
       <img class="pv-img pv-img-desktop" src="/projects/{{ project.slug }}/preview/desktop.png?v={{ preview.version }}" alt="The live site on a desktop screen, {{ preview.caption }}" width="1440" height="900">
       {% if preview.has_mobile %}<img class="pv-img pv-img-mobile" src="/projects/{{ project.slug }}/preview/mobile.png?v={{ preview.version }}" alt="The live site on a phone, {{ preview.caption }}" width="390" height="844" loading="lazy">{% endif %}
     {% endif %}
+    {% if preview.has_picture and preview.caption %}
+      <p class="pv-chip">{{ preview.caption }}{% if preview.stale %} · older than #{{ production.number }}{% endif %}</p>
+    {% endif %}
     {% if preview.state == 'pending' %}
       <p class="pv-note"><span class="live">{{ status({'shape': 'building', 'word': 'Capturing preview', 'tone': 'neutral'}) }}</span></p>
     {% elif not preview.has_picture %}
@@ -43,11 +46,7 @@
       <label for="pv-desktop">{{ icon('desktop') }}Desktop</label>
       {% if preview.has_mobile %}<label for="pv-mobile">{{ icon('mobile') }}Mobile</label>{% endif %}
     </div>
-    <p class="pv-caption">
-      {{ preview.caption }}
-      {% if preview.stale %} · older than production #{{ production.number }}{% endif %}
-      {% if preview.state == 'failed' and preview.has_picture %}<br><span class="tone-caution">No new preview: {{ preview.problem }}</span>{% endif %}
-    </p>
+    {% if preview.state == 'failed' and preview.has_picture %}<p class="pv-caption tone-caution">No new preview: {{ preview.problem }}</p>{% endif %}
     <div class="pv-actions">
       <a class="with-icon" href="{{ live_url }}" rel="noreferrer" target="_blank">Open in new tab {{ icon('external') }}</a>
       {% if preview.state != 'pending' %}
@@ -67,14 +66,13 @@
         {{ status(block.mark, 'status-lg') }}
         <div class="production-id">
           <p class="commit">
-            <a href="/deployments/{{ production.short_id }}">#{{ production.number }}</a>
+            <a href="/deployments/{{ production.short_id }}"{% if production.git_message %} title="{{ production.git_message }}"{% endif %}>#{{ production.number }}</a>
             <span class="with-icon muted">{{ icon('branch') }}<span class="mono">{{ production.git_ref }}</span></span>
-            <span class="mono muted">{{ production.git_sha[:8] }}</span>
           </p>
-          {% if production.git_message %}<p class="production-msg">{{ production.git_message }}</p>{% endif %}
-          <p class="muted small">Ready since {{ clock(production.ready_at, now) }} UTC ({{ ago(production.ready_at, now) }})
-            {% if block.rolled_back_from %} · Rolled back to #{{ production.number }} from <a href="/deployments/{{ block.rolled_back_from.short_id }}">#{{ block.rolled_back_from.number }}</a>{% endif %}
+          <p class="muted small" title="Ready since {{ production.ready_at.strftime('%Y-%m-%d %H:%M') if production.ready_at else '' }} UTC · {{ production.git_sha[:8] }}">{{ ago(production.ready_at, now) }} · <span class="mono">{{ production.git_sha[:8] }}</span>
+            {% if block.rolled_back_from %} · rolled back from <a href="/deployments/{{ block.rolled_back_from.short_id }}">#{{ block.rolled_back_from.number }}</a>{% endif %}
           </p>
+
         </div>
       {% elif block.state == 'missing' %}
         {{ status(block.mark, 'status-lg') }}
@@ -99,20 +97,23 @@
     {% if block.state == 'serving' and live_url %}
     {# Amendment §2: on a healthy project, looking is the common action. #}
     <div class="action"><a class="btn btn-primary" href="{{ live_url }}" rel="noreferrer" target="_blank">Open live site {{ icon('external') }}</a></div>
+    <div class="production-pair">
     {{ action(block.primary, 'secondary') }}
+    {% if block.rollback %}
+      {% set target, speed = block.rollback %}
+      <div class="action">
+        <form method="post" action="/deployments/{{ target.short_id }}/promote">
+          <button class="btn btn-secondary" type="submit" aria-describedby="rollback-speed">{{ icon('undo') }}Roll back to #{{ target.number }}</button>
+        </form>
+      </div>
+    {% endif %}
+    </div>
+    {% if block.rollback %}<p class="action-note" id="rollback-speed">{% if block.rollback[1] == 'instant' %}Rolling back is instant.{% else %}Rolling back {{ block.rollback[1] }}.{% endif %}</p>{% endif %}
     {% else %}
     {{ action(block.primary, 'primary') }}
     {% endif %}
     {% for a in block.secondary %}{{ action(a, 'secondary') }}{% endfor %}
-    {% if block.state == 'serving' and block.rollback %}
-      {% set target, speed = block.rollback %}
-      <div class="action action-rollback">
-        <form method="post" action="/deployments/{{ target.short_id }}/promote">
-          <button class="btn btn-quiet" type="submit">Roll back to #{{ target.number }}</button>
-        </form>
-        <p class="action-note">{{ speed }}</p>
-      </div>
-    {% endif %}
+
   </div>
   {% if production %}
   <nav class="quick" aria-label="Quick links">
@@ -124,9 +125,6 @@
   </nav>
   {% endif %}
 </section>
-{% if production_view %}
-<div class="card ov-line">{{ line(production_view.nodes, compact=true) }}</div>
-{% endif %}
 </div>
 
 <section class="ov-stats" aria-label="Deployment numbers">
@@ -136,7 +134,7 @@
     <div>
       <p class="stat-label">{{ st.label }}</p>
       <p class="stat-value">{{ st.value }}</p>
-      {% if st.trend %}<p class="stat-trend trend-{{ st.trend_sense }}">{{ st.trend }} <span class="muted">vs the week before</span></p>{% endif %}
+      {% if st.trend %}<p class="stat-trend trend-{{ st.trend_sense }}" title="Compared with the 7 days before">{{ st.trend }}</p>{% endif %}
       <p class="stat-note">{{ st.note }}</p>
     </div>
   </div>
@@ -173,7 +171,7 @@
     {% for v in recent %}{% set d = v.d %}
     <tr{% if v.is_current %} class="dtable-current"{% endif %}>
       <td><a href="/deployments/{{ d.short_id }}">#{{ d.number }}</a></td>
-      <td><span class="mono">{{ d.git_sha[:8] }}</span>{% if d.git_message %}<span class="dtable-msg">{{ d.git_message }}</span>{% endif %}</td>
+      <td class="dtable-commit"><span class="mono">{{ d.git_sha[:8] }}</span>{% if d.git_message %}<span class="dtable-msg">{{ d.git_message }}</span>{% endif %}</td>
       <td><span class="branch mono">{{ d.git_ref }}</span></td>
       <td>{{ status(v.mark) }}{% if v.is_current %} <span class="tag tag-current">{{ shape('current') }}<span class="word">Production</span></span>{% endif %}</td>
       <td title="{{ d.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ ago(d.created_at, now) }}</td>
@@ -196,7 +194,7 @@
     <h2 id="details" class="card-title">{{ icon('details') }}Project details</h2>
     {% set c = '/projects/' ~ project.slug ~ '/config' %}
     <dl class="facts facts-rows">
-      <dt>Repository</dt><dd class="with-icon">{{ icon('github') }}<span class="mono">{{ project.github_repo or project.repo_url }}</span></dd>
+      <dt>Repository</dt><dd class="with-icon">{{ icon('github') }}<span class="mono one-line" title="{{ project.github_repo or project.repo_url }}">{{ project.github_repo or project.repo_url }}</span></dd>
       <dt>Branch</dt><dd class="with-icon">{{ icon('branch') }}<span class="branch mono">{{ project.production_branch }}</span></dd>
       <dt>Build</dt><dd>{{ project.framework or 'detected on each build' }}{% if project.root_directory %} · <span class="mono">{{ project.root_directory }}/</span>{% endif %}</dd>
       <dt>Created</dt><dd>{{ project.created_at.strftime('%-d %b %Y') }}</dd>
