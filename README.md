@@ -611,6 +611,24 @@ It only touches images this installation built, identified by a
 staging copy or the end-to-end run, cannot clean away the first one's rollback
 targets. `deploypro housekeeping` runs it now.
 
+### What the live site looks like
+
+Each project's Overview shows a picture of its live site, at desktop and phone
+size, beside the production panel, with **Open in new tab** and **Refresh**.
+It is taken when production changes (a deploy going live, or a rollback) or
+when you press Refresh; never for previews.
+
+- **Through the public address:** the primary verified domain, else the
+  deployment's own address, so it shows what a visitor gets.
+- **In a short-lived browser container** per size (512 MB cap, 45 s limit,
+  removed afterwards), on Docker's default network: it has no route to the
+  database or to any container that is not public.
+- **Labelled with when and from which deployment** it was taken. A failed
+  capture keeps the previous picture and says why; it never affects a deploy.
+
+The browser image is `DEPLOYPRO_PREVIEW_IMAGE` (`zenika/alpine-chrome` by
+default, about 670 MB, pulled on first use). Set it empty to turn pictures off.
+
 ### Rollback
 
 ```bash

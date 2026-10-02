@@ -110,6 +110,8 @@ services:
       # Read-only, and only its free space is read: the System page shows
       # the disk Docker's images are on when it is not the server's own.
       - ${DEPLOYPRO_IMAGE_STORE_HOST_DIR:-/var/lib/containerd}:/var/lib/deploypro/image-store:ro
+      # The live-site pictures the worker takes; the dashboard only shows them.
+      - previews:/var/lib/deploypro/previews:ro
     labels:
       traefik.enable: "true"
       traefik.docker.network: ${DEPLOYPRO_NETWORK:-deploypro}
@@ -145,6 +147,7 @@ services:
       # As on the api: the disk the images are on, so a build checks for room
       # there too and the disk alert watches it.
       - ${DEPLOYPRO_IMAGE_STORE_HOST_DIR:-/var/lib/containerd}:/var/lib/deploypro/image-store:ro
+      - previews:/var/lib/deploypro/previews
     networks:
       - deploypro
 
@@ -162,3 +165,4 @@ volumes:
   router-config:
   build-cache:
   acme:
+  previews:

@@ -1016,3 +1016,98 @@ def setup_items(
             ticked_by_owner=True,
         ),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Overview: the live-site picture and the numbers beside it
+# (docs/design/amendment-overview-preview.md)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Stat:
+    label: str
+    value: str
+    note: str
+
+
+STAT_WINDOW = timedelta(days=7)
+
+
+def deploy_stats(deployments: Sequence[Deployment], now: datetime) -> list[Stat]:
+    """Only numbers DeployPro records. Response time and uptime are absent
+    because nothing keeps their history; a number nobody measured would be
+    invented (amendment §3)."""
+    recent = [d for d in deployments if now - d.created_at <= STAT_WINDOW]
+    builds = [
+        (d.built_at - d.started_at).total_seconds()
+        for d in recent
+        if d.started_at and d.built_at
+    ]
+    finished = [
+        d for d in recent if d.status in (DeploymentStatus.READY, DeploymentStatus.FAILED)
+    ]
+    ready = sum(1 for d in finished if d.status is DeploymentStatus.READY)
+    return [
+        Stat("Deployments", str(len(recent)), "last 7 days"),
+        Stat(
+            "Average build",
+            duration(sum(builds) / len(builds)) if builds else "—",
+            "last 7 days",
+        ),
+        Stat(
+            "Success rate",
+            f"{round(100 * ready / len(finished))}%" if finished else "—",
+            f"{ready} of {len(finished)} finished, last 7 days",
+        ),
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class Preview:
+    """What the Overview's picture area shows (amendment §4)."""
+
+    #: "none" (never captured), "pending", "captured", "failed".
+    state: str
+    has_picture: bool
+    has_mobile: bool
+    #: "captured 10:41 · #276": when, and from which deployment.
+    caption: str
+    #: Why the latest capture failed, or "".
+    problem: str
+    #: The picture is older than production: say so, never pass it off as live.
+    stale: bool
+    #: Changes with each new picture, so the browser never shows a cached one.
+    version: str = ""
+
+
+def preview(
+    row, production: Deployment | None, captured_number: int | None, now
+) -> Preview:
+    if row is None:
+        return Preview("none", False, False, "", "", False)
+    caption = ""
+    if row.has_picture and row.captured_at:
+        caption = f"captured {clock(row.captured_at, now)}"
+        if captured_number is not None:
+            caption += f" · #{captured_number}"
+    stale = bool(
+        row.has_picture
+        and production is not None
+        and row.captured_deployment_id != production.id
+    )
+    state = {
+        "requested": "pending",
+        "capturing": "pending",
+        "captured": "captured",
+        "failed": "failed",
+    }[row.status]
+    return Preview(
+        state=state,
+        has_picture=row.has_picture,
+        has_mobile=bool(row.mobile_file),
+        caption=caption,
+        problem=(row.error or "") if state == "failed" else "",
+        stale=stale,
+        version=row.captured_at.strftime("%Y%m%d%H%M%S") if row.captured_at else "",
+    )
