@@ -88,7 +88,7 @@ async ({marks, size, scale, background, colours}) => {
   const px = size * scale;
   const grey = [];
   for (const [name, svg, family] of marks) {
-    const markup = svg.replace('<svg ', `<svg xmlns="http://www.w3.org/2000/svg" `
+    const markup = svg.replace(/ (width|height)="[^"]*"/g, '').replace('<svg ', `<svg xmlns="http://www.w3.org/2000/svg" `
       + `width="${px}" height="${px}" style="color:${colours[family]}" `);
     const img = new Image();
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markup);
