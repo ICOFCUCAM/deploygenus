@@ -22,7 +22,7 @@
   </dd>
   <dt>Pushes</dt>
   <dd>
-    {% if linked %}A push to <span class="mono">{{ project.production_branch }}</span> goes live; a push to any other branch deploys a preview.
+    {% if linked %}A push to <span class="mono">{{ project.production_branch }}</span> goes live; {% if project.preview_deploys %}a push to any other branch deploys a preview.{% else %}pushes to other branches are ignored (previews are off).{% endif %}
     {% else %}Arrive only through a webhook you add on GitHub (below). If you added it, pushes deploy.{% endif %}
   </dd>
 </dl>

@@ -84,7 +84,9 @@ class TestBuildDirectories:
 
 class TestRoomToBuild:
     def settings(self, tmp_path, **kwargs):
-        return SimpleNamespace(build_root=tmp_path, min_free_gb=5, **kwargs)
+        return SimpleNamespace(
+            build_root=tmp_path, image_store_dir=None, min_free_gb=5, **kwargs
+        )
 
     async def test_with_room_nothing_is_cleared(self, monkeypatch, tmp_path):
         monkeypatch.setattr(housekeeping, "free_gb", lambda _path: 20.0)

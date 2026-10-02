@@ -26,7 +26,7 @@ from deploypro.adapters import containers
 from deploypro.config import Settings
 from deploypro.domain import naming
 from deploypro.domain.buildplan import DEFAULT_PORT
-from deploypro.engine import health
+from deploypro.engine import disks, health
 from deploypro.engine.alerts import Alerts
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import processes as process_repo
@@ -104,24 +104,30 @@ class Monitor:
         return down
 
     async def _check_disk(self) -> None:
-        percent = disk_used_percent(self.settings.build_root)
-        if percent is None:
-            return
+        """Each disk a build writes to, alerted separately: the images' own
+        disk filling is as fatal to the next build as the server's."""
         limit = self.settings.disk_alert_percent
-        if percent >= limit:
-            await self.alerts.fire(
-                "disk",
-                title=f"Disk {percent}% full",
-                detail=(
-                    f"Over the {limit}% threshold. Builds will start failing "
-                    "when it fills. `deploypro doctor` shows what is using it; old "
-                    "images and build cache are cleared hourly."
-                ),
-            )
-        elif percent < limit - 5:
-            # A little below the threshold before resolving, so a disk hovering
-            # at the line does not alert and resolve every minute.
-            await self.alerts.resolve("disk", title=f"Disk back to {percent}% full")
+        for index, (name, path) in enumerate(disks.paths(self.settings)):
+            percent = disk_used_percent(path)
+            if percent is None:
+                continue
+            key = "disk" if index == 0 else "disk:images"
+            which = "Disk" if index == 0 else "Image storage disk"
+            if percent >= limit:
+                await self.alerts.fire(
+                    key,
+                    title=f"{which} {percent}% full",
+                    detail=(
+                        f"{name[0].upper()}{name[1:]} is over the {limit}% threshold. "
+                        "Builds will start failing when it fills. `deploypro doctor` "
+                        "shows what is using it; old images and build cache are "
+                        "cleared hourly."
+                    ),
+                )
+            elif percent < limit - 5:
+                # A little below the threshold before resolving, so a disk
+                # hovering at the line does not alert and resolve every minute.
+                await self.alerts.resolve(key, title=f"{which} back to {percent}% full")
 
     async def _record(
         self,

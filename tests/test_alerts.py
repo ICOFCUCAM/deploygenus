@@ -72,6 +72,7 @@ class FakeSettings:
     health_path = "/"
     disk_alert_percent = 90
     build_root = "/nonexistent"
+    image_store_dir = None
 
 
 @pytest.fixture

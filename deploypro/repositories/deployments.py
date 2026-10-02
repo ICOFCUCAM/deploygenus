@@ -127,7 +127,8 @@ async def list_for_project(project_id: UUID, *, limit: int = 50) -> list[Deploym
 
 
 async def claim_next(worker_id: str) -> Deployment | None:
-    """Take the oldest queued deployment, or return None.
+    """Take the next queued deployment, or return None: the oldest build of a
+    production branch, else the oldest preview.
 
     `FOR UPDATE SKIP LOCKED` is what makes running several workers safe: each
     one locks a different row instead of queueing behind the same one, and a
@@ -143,10 +144,14 @@ async def claim_next(worker_id: str) -> Deployment | None:
                    leased_at = now(),
                    started_at = now()
              WHERE id = (
-                   SELECT id FROM deployments
-                    WHERE status = 'queued'
-                    ORDER BY created_at
-                      FOR UPDATE SKIP LOCKED
+                   SELECT d.id FROM deployments d
+                     JOIN projects p ON p.id = d.project_id
+                    WHERE d.status = 'queued'
+                    -- Production before previews: what goes live does not wait
+                    -- behind what nobody asked for. Oldest first within each
+                    -- (docs/design/proposal-build-queue.md §1).
+                    ORDER BY (d.git_ref = p.production_branch) DESC, d.created_at
+                      FOR UPDATE OF d SKIP LOCKED
                     LIMIT 1
              )
             RETURNING {COLUMNS}
@@ -237,6 +242,40 @@ async def mark_failed(deployment_id: UUID, *, error: str) -> Deployment:
         """,
         (error[:2000],),
     )
+
+
+async def supersede_queued(newer: Deployment) -> list[Deployment]:
+    """Cancel queued builds of `newer`'s branch that it replaces.
+
+    Only builds of a branch's head (a push, or a manual deploy of the branch)
+    are replaced; a redeploy or rollback names its commit on purpose and is
+    left alone. Only `queued` rows: a build that has started finishes. The
+    `status = 'queued'` condition is also what makes this safe against a
+    worker claiming the same row at the same moment.
+    """
+    async with db.connection() as conn:
+        cur = await conn.execute(
+            f"""
+            UPDATE deployments
+               SET status = 'cancelled', finished_at = now(),
+                   error = %s
+             WHERE project_id = %s
+               AND git_ref = %s
+               AND status = 'queued'
+               AND trigger IN ('push', 'manual')
+               AND number < %s
+            RETURNING {COLUMNS}
+            """,
+            (
+                f"Replaced by #{newer.number}, a newer commit on {newer.git_ref}, "
+                "before it started building.",
+                newer.project_id,
+                newer.git_ref,
+                newer.number,
+            ),
+        )
+        rows = await cur.fetchall()
+    return [to_deployment(row) for row in rows]
 
 
 async def mark_cancelled(deployment_id: UUID) -> Deployment:

@@ -18,7 +18,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from deploypro.adapters import crypto
+from deploypro.adapters import crypto, notify
 from deploypro.config import Settings, get_settings
 from deploypro.deps import SettingsDep, token_matches
 from deploypro.domain import naming, session
@@ -39,10 +39,11 @@ from deploypro.domain.storage import (
     normalise_mount_path,
     validate_volume_name,
 )
+from deploypro.engine import dns, routing, service, verify
 from deploypro.engine import promote as promote_engine
-from deploypro.engine import routing, service, verify
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
+from deploypro.repositories import maintenance as maintenance_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
 from deploypro.repositories import volumes as volume_repo
@@ -230,6 +231,7 @@ async def save_build(
     cpu_shares: Annotated[str, Form()] = "",
     keep_warm: Annotated[str, Form()] = "",
     stop_timeout_seconds: Annotated[str, Form()] = "",
+    preview_deploys: Annotated[str, Form()] = "",
 ):
     """Configuration → Build. Every field on the page, and only those.
 
@@ -254,6 +256,9 @@ async def save_build(
         "stop_timeout_seconds": min(
             max(_int(stop_timeout_seconds, project.stop_timeout_seconds), 1), 86400
         ),
+        # A checkbox: absent from the post means unticked. Safe here because
+        # this handler serves only the Build form, which always carries it.
+        "preview_deploys": preview_deploys == "1",
     }
     # An empty override means "go back to detecting it", which is a real
     # setting and not a missing field — so these are written as NULL.
@@ -269,7 +274,7 @@ async def save_build(
     return _redirect(
         back,
         ok="Saved. Build settings and resources apply to the next deploy; the "
-        "graceful shutdown time to the next replacement.",
+        "graceful shutdown time to the next replacement; previews to the next push.",
     )
 
 
@@ -380,13 +385,54 @@ async def add_domain(
             ),
         )
     try:
-        await project_repo.add_domain(project.id, cleaned, primary=bool(primary))
+        domain = await project_repo.add_domain(project.id, cleaned, primary=bool(primary))
     except DeployProError as exc:
         return _redirect(f"/projects/{slug}/config/domains", err=exc.message)
-    return _redirect(
-        f"/projects/{slug}/config/domains",
-        ok=f"Added {cleaned}. Point its DNS here, then verify it.",
+    if not dns.enabled(settings):
+        return _redirect(
+            f"/projects/{slug}/config/domains",
+            ok=f"Added {cleaned}. Point its DNS here, then verify it.",
+        )
+    said = await _make_dns(project, domain, settings)
+    return _redirect(f"/projects/{slug}/config/domains", ok=f"Added {cleaned}. {said}")
+
+
+@router.post("/projects/{slug}/domains/{host}/dns")
+async def create_dns_record(
+    request: Request, slug: str, host: str, settings: SettingsDep
+):
+    """Make the record on Cloudflare for a domain still on the manual path:
+    one added before this existed, or one whose zone the token now reaches."""
+    signed_in(request)
+    project = await project_repo.get_by_slug(slug)
+    domain = {d.host: d for d in await project_repo.list_domains(project.id)}.get(
+        host.lower()
     )
+    if domain is None:
+        return _redirect(
+            f"/projects/{slug}/config/domains", err=f"{host} is not on this project."
+        )
+    return _redirect(
+        f"/projects/{slug}/config/domains", ok=await _make_dns(project, domain, settings)
+    )
+
+
+async def _make_dns(project: Project, domain: Domain, settings: Settings) -> str:
+    """Make the domain's record on Cloudflare when DeployPro can, then verify
+    it straight away. Returns what happened, for the page."""
+    outcome = await dns.ensure_record(settings, domain.host, project_slug=project.slug)
+    if outcome.made:
+        await project_repo.set_domain_dns(
+            domain.id, zone_id=outcome.zone_id, records=outcome.made
+        )
+    if not (outcome.made or outcome.already_here):
+        return outcome.detail
+    result = await verify.verify(domain.host, expected_host=settings.deploy_domain)
+    if not result.verified:
+        return f"{outcome.detail} DNS has not caught up yet; press Verify in a minute."
+    await project_repo.mark_domain_verified(domain.id)
+    await routing.refresh(await project_repo.get(project.id), settings=settings)
+    return f"{outcome.detail} Verified: it serves from now on."
 
 
 @router.post("/projects/{slug}/volumes")
@@ -452,9 +498,15 @@ async def verify_domain(request: Request, slug: str, host: str, settings: Settin
 async def remove_domain(request: Request, slug: str, host: str, settings: SettingsDep):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
+    domain = {d.host: d for d in await project_repo.list_domains(project.id)}.get(
+        host.lower()
+    )
     await project_repo.remove_domain(project.id, host)
     await routing.refresh(await project_repo.get(project.id), settings=settings)
-    return _redirect(f"/projects/{slug}/config/domains", ok=f"Removed {host}.")
+    # After the route is gone: a record removed first would leave the name
+    # still routed here for a moment with nothing pointing at it.
+    said = await dns.remove_records(settings, domain) if domain else ""
+    return _redirect(f"/projects/{slug}/config/domains", ok=f"Removed {host}.{said}")
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +699,81 @@ async def cancel(request: Request, short_id: str):
         )
     await deployment_repo.mark_cancelled(deployment.id)
     return _redirect(f"/deployments/{short_id}", ok="Cancelled.")
+
+
+# ---------------------------------------------------------------------------
+# System: clean-up, backup, test alert, setup checklist
+# ---------------------------------------------------------------------------
+
+
+@router.post("/system/cleanup")
+async def request_cleanup(request: Request):
+    """Asks the worker; the dashboard never runs a clean-up itself (it must
+    run between deploys, and only the worker knows when that is)."""
+    signed_in(request)
+    try:
+        await maintenance_repo.request("cleanup")
+    except DeployProError as exc:
+        return _redirect("/system", err=exc.message)
+    return _redirect(
+        "/system",
+        ok="Clean-up started. This page shows what it removed when it finishes.",
+    )
+
+
+@router.post("/system/backup")
+async def request_backup(request: Request, settings: SettingsDep):
+    signed_in(request)
+    if settings.backup_dir is None:
+        return _redirect(
+            "/system",
+            err="Backups are off: set DEPLOYPRO_BACKUP_DIR in /opt/deploypro/.env.",
+        )
+    try:
+        await maintenance_repo.request("backup")
+    except DeployProError as exc:
+        return _redirect("/system", err=exc.message)
+    return _redirect(
+        "/system",
+        ok="Backup started. It takes a few minutes; this page shows it when it's done.",
+    )
+
+
+@router.post("/system/test-alert")
+async def send_test_alert(request: Request, settings: SettingsDep):
+    signed_in(request)
+    if not settings.alert_webhook_url:
+        return _redirect(
+            "/system", err="Alerts are off: set DEPLOYPRO_ALERT_WEBHOOK_URL first."
+        )
+    delivered = await notify.send(
+        settings.alert_webhook_url,
+        title="Test alert",
+        detail="If you can read this, DeployPro can reach you when something breaks.",
+        level="warning",
+    )
+    if not delivered:
+        return _redirect(
+            "/system",
+            err="The test alert was not accepted. Check DEPLOYPRO_ALERT_WEBHOOK_URL.",
+        )
+    return _redirect(
+        "/system", ok="Test alert sent. If it didn't arrive, check the webhook URL."
+    )
+
+
+@router.post("/system/setup/{item}")
+async def tick_setup(request: Request, item: str, done: Annotated[str, Form()] = "1"):
+    """The two setup steps only the owner can confirm."""
+    signed_in(request)
+    if item not in views.OWNER_TICKS:
+        return _redirect("/system", err="That is not a setup step you can tick.")
+    key = f"checklist:{item}"
+    if done == "1":
+        await maintenance_repo.set_state(key, {"done": True})
+    else:
+        await maintenance_repo.clear_state(key)
+    return _redirect("/system")
 
 
 # ---------------------------------------------------------------------------

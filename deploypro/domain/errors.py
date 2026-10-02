@@ -75,3 +75,10 @@ class GitHubError(DeployProError):
 
     status_code = 502
     code = "github_error"
+
+
+class DnsProviderError(DeployProError):
+    """The DNS provider (Cloudflare) refused or failed a request."""
+
+    status_code = 502
+    code = "dns_provider_error"

@@ -50,6 +50,7 @@ def to_project(row: dict[str, Any]) -> Project:
         updated_at=row["updated_at"],
         github_installation_id=row["github_installation_id"],
         github_repo=row["github_repo"],
+        preview_deploys=row["preview_deploys"],
     )
 
 
@@ -99,6 +100,8 @@ def to_domain(row: dict[str, Any]) -> Domain:
         verified_at=row["verified_at"],
         is_primary=row["is_primary"],
         created_at=row["created_at"],
+        dns_zone_id=row["dns_zone_id"],
+        dns_records=tuple(row["dns_records"] or ()),
     )
 
 

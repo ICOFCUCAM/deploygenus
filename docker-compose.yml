@@ -107,6 +107,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - router-config:/var/lib/deploypro/router
       - build-cache:/var/lib/deploypro/builds
+      # Read-only, and only its free space is read: the System page shows
+      # the disk Docker's images are on when it is not the server's own.
+      - ${DEPLOYPRO_IMAGE_STORE_HOST_DIR:-/var/lib/containerd}:/var/lib/deploypro/image-store:ro
     labels:
       traefik.enable: "true"
       traefik.docker.network: ${DEPLOYPRO_NETWORK:-deploypro}
@@ -139,6 +142,9 @@ services:
       # Docker. Same path in both, so `deploypro backup` output means the same
       # thing inside and outside the container.
       - ${DEPLOYPRO_BACKUP_HOST_DIR:-/var/backups/deploypro}:${DEPLOYPRO_BACKUP_DIR:-/var/backups/deploypro}
+      # As on the api: the disk the images are on, so a build checks for room
+      # there too and the disk alert watches it.
+      - ${DEPLOYPRO_IMAGE_STORE_HOST_DIR:-/var/lib/containerd}:/var/lib/deploypro/image-store:ro
     networks:
       - deploypro
 

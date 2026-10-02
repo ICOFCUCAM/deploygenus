@@ -21,6 +21,7 @@ from pathlib import Path
 from deploypro.adapters import containers
 from deploypro.config import Settings
 from deploypro.domain.retention import images_to_keep, images_to_remove
+from deploypro.engine import disks
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
@@ -147,18 +148,36 @@ async def ensure_room(settings: Settings) -> str | None:
     not start below `min_free_gb`: old images and cache are cleared first,
     and if that is not enough the reason is returned, to fail the deployment
     before anything is written.
+
+    Both disks count when the images live on their own: the build writes its
+    layers there, and its working copy and the database on the server's.
     """
-    free = free_gb(settings.build_root)
-    if free is None or free >= settings.min_free_gb:
+    if not settings.min_free_gb:
+        return None
+    short = _short_of_room(settings)
+    if short is None:
         return None
     report = await run(settings)
-    logger.info("housekeeping before a build, %.1f GB free: %s", free, report)
-    free = free_gb(settings.build_root)
-    if free is None or free >= settings.min_free_gb:
+    logger.info(
+        "housekeeping before a build, %.1f GB free on %s: %s", short[0], short[1], report
+    )
+    short = _short_of_room(settings)
+    if short is None:
         return None
+    free, name = short
     return (
-        f"The server's disk is nearly full: {free:.1f} GB free, and a build needs "
-        f"at least {settings.min_free_gb} GB. Old images and build cache were "
-        "cleared and it is still not enough. Free space on the server "
+        f"The server's disk is nearly full: {free:.1f} GB free on {name}, and a "
+        f"build needs at least {settings.min_free_gb} GB. Old images and build cache "
+        "were cleared and it is still not enough. Free space on the server "
         "(`deploypro doctor` shows what is using it), then redeploy."
     )
+
+
+def _short_of_room(settings: Settings) -> tuple[float, str] | None:
+    """(free GB, which disk) for the fullest disk under the minimum, or None."""
+    short = [
+        (free, name)
+        for name, path in disks.paths(settings)
+        if (free := free_gb(path)) is not None and free < settings.min_free_gb
+    ]
+    return min(short) if short else None

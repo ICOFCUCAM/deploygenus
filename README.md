@@ -135,6 +135,19 @@ A deployment that succeeds is immutable. Superseded ones keep their images and
 have their containers reclaimed after `keep_warm`, so rolling back is a
 restart rather than a rebuild.
 
+**The queue.** Builds run one at a time. A queued build of a production
+branch goes before any queued preview; a build already running is never
+interrupted. When a branch gets a newer push (or **Deploy**) while an older
+build of it is still queued, the older one is cancelled and says which build
+replaced it. Redeploys and rollbacks name a commit on purpose and are never
+replaced.
+
+**Previews can be switched off** per project (Configuration → Build, or
+`deploypro project set <project> --previews off`). Pushes to other branches
+are then acknowledged and ignored, and only the production branch deploys on
+push. Useful when every change reaches production through a merge anyway,
+where each preview is the same build made twice.
+
 ## Setting it up
 
 **On a fresh Ubuntu or Debian server, one command does all of it:**
@@ -356,6 +369,22 @@ unverified name would fail its ACME challenge against a rate limit shared by
 every site on the host. Once verified, aliases 301 to the primary, because two
 hostnames serving identical pages is a duplicate-content problem.
 
+**On Cloudflare, the DNS record is made for you.** When `DEPLOYPRO_DNS_PROVIDER`
+is `cloudflare` and the domain is in a zone `CF_DNS_API_TOKEN` can see (*Zone →
+Read*, *DNS → Edit*), adding the domain creates an A record (and AAAA) to this
+server, DNS only, commented `DeployPro: <project>`, and verifies it straight
+away. Everything else stays manual, and says why:
+
+- a domain in a zone the token can't reach (add the zone to the token's *Zone
+  Resources* to change that);
+- a name that already has a record pointing elsewhere: DeployPro never
+  replaces a record it did not make;
+- any DNS provider other than Cloudflare.
+
+Removing the domain deletes the record DeployPro made, only if it is still
+unchanged. The dashboard's **Create DNS record** button does the same for a
+domain added before, or by hand.
+
 ### Workers and scheduled jobs
 
 This is the part Vercel has no answer for. A process is another container from
@@ -562,6 +591,20 @@ Before every build it also checks for room. With less than
 that is not enough the deployment fails with a message saying the disk is
 full. Letting the build fill the disk would take Postgres down with it, and
 every deploy after would fail with a database error instead.
+
+**Images on their own disk.** If Docker's images live on a separate disk (a
+Hetzner Volume mounted over `/var/lib/containerd`, say), DeployPro watches
+that disk too: the check before a build, the disk alert, `deploypro doctor`
+and the System page all cover both. It reads the image store's free space
+through a read-only mount of `DEPLOYPRO_IMAGE_STORE_HOST_DIR`
+(`/var/lib/containerd` by default, where Docker 29 keeps images; set it to
+`/var/lib/docker` for Docker's older image store). On a single-disk server
+nothing changes.
+
+**From the dashboard.** The System page shows each disk, the build cache, the
+last cleanup and backup, and whether alerts are on, with **Clean up now**,
+**Back up now** and **Send test alert**. The dashboard asks the worker; it
+never runs either itself. A cleanup runs between deploys, like the hourly one.
 
 It only touches images this installation built, identified by a
 `deploypro.instance` label. A second DeployPro on the same Docker host, such as a

@@ -122,6 +122,9 @@ class Project:
     #: project needs neither a deploy key nor a webhook of its own.
     github_installation_id: int | None = None
     github_repo: str | None = None
+    #: Whether a push to another branch builds a preview. Off, only the
+    #: production branch deploys on push (docs/design/proposal-build-queue.md).
+    preview_deploys: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,10 +179,18 @@ class Domain:
     verified_at: datetime | None
     is_primary: bool
     created_at: datetime
+    #: The records DeployPro made for it on Cloudflare, if it made any:
+    #: ({"id", "type", "content"}, ...). Empty for a domain on the manual path.
+    dns_zone_id: str | None = None
+    dns_records: tuple[dict, ...] = ()
 
     @property
     def is_verified(self) -> bool:
         return self.verified_at is not None
+
+    @property
+    def dns_managed(self) -> bool:
+        return bool(self.dns_records)
 
 
 @dataclass(frozen=True, slots=True)

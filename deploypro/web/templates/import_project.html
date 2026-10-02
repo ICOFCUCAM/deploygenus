@@ -22,8 +22,8 @@
   <div class="fields-2">
     <div class="field">
       <label for="production_branch">Production branch</label>
-      <input class="mono-input" type="text" id="production_branch" name="production_branch" value="{{ repo.default_branch }}" aria-describedby="branch_hint">
-      <p class="hint" id="branch_hint">A push here goes live. Pushes to other branches deploy as previews.</p>
+      <input class="mono-input" type="text" id="production_branch" name="production_branch" value="{{ repo.production_branch }}" aria-describedby="branch_hint">
+      <p class="hint" id="branch_hint">A push here goes live. Pushes to other branches deploy as previews.{% if repo.production_branch != repo.default_branch %} GitHub’s default branch is <span class="mono">{{ repo.default_branch }}</span>; <span class="mono">main</span> is suggested because it exists.{% endif %}</p>
     </div>
     <div class="field">
       <label for="root_directory">Root directory <span class="muted">(optional)</span></label>
@@ -41,7 +41,7 @@
     </div>
   </div>
   <div class="actions">
-    <button class="btn btn-primary" type="submit">Deploy {{ repo.default_branch }}</button>
+    <button class="btn btn-primary" type="submit">Deploy {{ repo.production_branch }}</button>
     <a class="btn btn-quiet" href="/projects/new">Cancel</a>
   </div>
   <p class="hint">DeployPro detects the application’s framework automatically from the repository’s files. If it has a <span class="mono">Dockerfile</span>, that is used as it is.</p>

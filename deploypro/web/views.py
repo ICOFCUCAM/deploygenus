@@ -18,6 +18,13 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from deploypro.domain.maintenance import (
+    RECENT_BACKUP,
+    Disk,
+    MaintenanceRun,
+    disk_condition,
+    size,
+)
 from deploypro.domain.models import (
     Deployment,
     DeploymentStatus,
@@ -381,7 +388,9 @@ def detail_sentence(v: DeploymentView) -> str:
     if status is DeploymentStatus.DEPLOYING:
         return "Starting the container and checking it answers."
     if status is DeploymentStatus.CANCELLED:
-        return "Cancelled before it started building."
+        # Replaced by a newer commit: the engine says by which, and that is
+        # the more useful sentence (docs/design/proposal-build-queue.md §2).
+        return v.d.error or "Cancelled before it started building."
     if status is DeploymentStatus.FAILED:
         if v.production_branch:
             return "Production was not touched."
@@ -761,3 +770,249 @@ def workers(processes: Iterable[Process]) -> list[Process]:
 
 def jobs(processes: Iterable[Process]) -> list[Process]:
     return [p for p in processes if p.type is ProcessType.CRON]
+
+
+# ---------------------------------------------------------------------------
+# System: disk and backups, and setup
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Fact:
+    """One row of the System page: a label, a value, and a mark only when
+    something needs attention (normal is quiet)."""
+
+    label: str
+    text: str
+    mark: Mark | None = None
+    note: str = ""
+
+
+def disk_fact(disk: Disk, *, alert_percent: int, min_free_gb: int) -> Fact:
+    used = f"{disk.used_percent}% used"
+    free = f"{disk.free_gb:.1f} GB free of {disk.total_gb:.0f} GB"
+    condition = disk_condition(disk, alert_percent=alert_percent, min_free_gb=min_free_gb)
+    if condition == "full":
+        return Fact(
+            disk.label,
+            free,
+            Mark("failed", used),
+            f"Builds are refused until there is {min_free_gb} GB free.",
+        )
+    if condition == "caution":
+        return Fact(
+            disk.label,
+            free,
+            Mark("caution", used),
+            "Old images and cache are cleared hourly. If it stays this full, "
+            "free space on the server.",
+        )
+    return Fact(disk.label, f"{used} · {free}")
+
+
+def cache_fact(state: dict | None, *, cap_gb: int) -> Fact:
+    if not state or state.get("bytes") is None:
+        return Fact("Build cache", f"not measured yet · capped at {cap_gb} GB")
+    return Fact("Build cache", f"{size(state['bytes'])} · capped at {cap_gb} GB")
+
+
+def _waiting_or_started(run: MaintenanceRun, now: datetime) -> str:
+    if run.started_at is None:
+        return "waiting for the worker"
+    return f"started {clock(run.started_at, now)}"
+
+
+def cleanup_fact(
+    open_run: MaintenanceRun | None, last: MaintenanceRun | None, now: datetime
+) -> Fact:
+    if open_run is not None:
+        return Fact(
+            "Last clean-up",
+            _waiting_or_started(open_run, now),
+            Mark("building", "Cleaning up"),
+        )
+    if last is None:
+        return Fact("Last clean-up", "not yet · runs hourly")
+    at = clock(last.finished_at, now)
+    if last.status == "failed":
+        return Fact(
+            "Last clean-up", f"{at} · {last.error or ''}", Mark("failed", "Failed")
+        )
+    return Fact("Last clean-up", " · ".join(x for x in (at, last.summary, "hourly") if x))
+
+
+def _parse_time(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class Backups:
+    facts: list[Fact]
+    #: Backups are on and none is running, so Back up now is offered.
+    can_start: bool
+    #: No recent backup: Back up now becomes the page's primary action (D3).
+    needed: bool
+    running: bool
+
+
+def backups(
+    state: dict | None,
+    open_run: MaintenanceRun | None,
+    last: MaintenanceRun | None,
+    *,
+    enabled: bool,
+    hour: int,
+    now: datetime,
+) -> Backups:
+    if not enabled:
+        return Backups(
+            [
+                Fact(
+                    "Backups",
+                    "Set DEPLOYPRO_BACKUP_DIR in /opt/deploypro/.env",
+                    Mark("caution", "Off"),
+                )
+            ],
+            can_start=False,
+            needed=False,
+            running=False,
+        )
+    state = state or {}
+    newest_at = _parse_time(state.get("newest_at"))
+    recent = newest_at is not None and now - newest_at < RECENT_BACKUP
+    kept = state.get("count") or 0
+
+    if open_run is not None:
+        last_fact = Fact(
+            "Last backup",
+            _waiting_or_started(open_run, now),
+            Mark("building", "Backing up"),
+        )
+    elif (
+        last is not None
+        and last.status == "failed"
+        and (newest_at is None or (last.finished_at or now) > newest_at)
+    ):
+        last_fact = Fact(
+            "Last backup",
+            f"{clock(last.finished_at, now)} · {last.error or ''}",
+            Mark("failed", "Failed"),
+        )
+    elif newest_at is None:
+        last_fact = Fact("Last backup", "", Mark("caution", "None yet"))
+    else:
+        text = (
+            f"{clock(newest_at, now)} · {size(state.get('newest_bytes'))} · {kept} kept"
+        )
+        last_fact = (
+            Fact("Last backup", text)
+            if recent
+            else Fact("Last backup", text, Mark("caution", "Not recent"))
+        )
+
+    upcoming = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if upcoming <= now:
+        upcoming += timedelta(days=1)
+    day = "Today" if upcoming.date() == now.date() else "Tomorrow"
+    facts = [
+        last_fact,
+        Fact("Next backup", f"{day} {upcoming:%H:%M} UTC"),
+        Fact(
+            "Kept on",
+            f"This server only ({state.get('dir') or 'the backup directory'})",
+            note="A backup here is lost with the server. Copy it off: see Setup.",
+        ),
+    ]
+    running = open_run is not None
+    return Backups(
+        facts, can_start=not running, needed=not recent and not running, running=running
+    )
+
+
+def webhook_kind(url: str) -> str:
+    host = url.split("//", 1)[-1].split("/", 1)[0].lower()
+    if "discord" in host:
+        return "Discord"
+    if "slack" in host:
+        return "Slack"
+    return "webhook"
+
+
+def alerts_fact(url: str) -> Fact:
+    """The URL itself is never shown: it is a credential (Phase 5 §6)."""
+    if not url:
+        return Fact(
+            "Alerts",
+            "Nothing will tell you when a deploy or the disk fails.",
+            Mark("caution", "Off"),
+            "Set DEPLOYPRO_ALERT_WEBHOOK_URL in /opt/deploypro/.env, then run "
+            "docker compose up -d in /opt/deploypro.",
+        )
+    return Fact("Alerts", f"On · {webhook_kind(url)}")
+
+
+@dataclass(frozen=True, slots=True)
+class SetupItem:
+    key: str
+    label: str
+    done: bool
+    how: str
+    #: A command to run on the server, shown as code.
+    command: str = ""
+    #: Done is the owner's word for it (DeployPro can't see a password
+    #: manager or another server), so the owner ticks it.
+    ticked_by_owner: bool = False
+
+
+#: The things only the owner can confirm, keyed as stored (`checklist:<key>`).
+OWNER_TICKS = ("master_key", "offsite")
+
+
+def setup_items(
+    ticks: dict[str, dict],
+    *,
+    alerts_on: bool,
+    backup_exists: bool,
+    backup_dir: str,
+) -> list[SetupItem]:
+    return [
+        SetupItem(
+            "master_key",
+            "Master key saved in a password manager",
+            "checklist:master_key" in ticks,
+            "Save the value this prints on the server. Backups leave it out, and "
+            "without it a backup's secrets can't be read.",
+            command="grep DEPLOYPRO_MASTER_KEY /opt/deploypro/.env",
+            ticked_by_owner=True,
+        ),
+        SetupItem(
+            "alerts",
+            "Alerts on",
+            alerts_on,
+            "Put a Discord or Slack webhook URL in DEPLOYPRO_ALERT_WEBHOOK_URL in "
+            "/opt/deploypro/.env, then run this in /opt/deploypro.",
+            command="docker compose up -d",
+        ),
+        SetupItem(
+            "backup",
+            "A backup taken",
+            backup_exists,
+            "Back up now, under Disk and backups.",
+        ),
+        SetupItem(
+            "offsite",
+            "Backups copied off this server",
+            "checklist:offsite" in ticks,
+            f"Copy {backup_dir or '/var/backups/deploypro'} to other storage every "
+            "day, with rsync or rclone on a cron. A backup on this server is lost "
+            "with it.",
+            ticked_by_owner=True,
+        ),
+    ]

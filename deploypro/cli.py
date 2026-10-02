@@ -277,12 +277,17 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
             ("memory_mb", args.memory),
             ("cpu_shares", args.cpus),
             ("keep_warm", args.keep_warm),
+            (
+                "preview_deploys",
+                None if args.previews is None else args.previews == "on",
+            ),
         )
         if value is not None
     }
     if not changes:
         raise DeployProError(
-            "Nothing to change — pass --stop-timeout, --memory, --cpus …"
+            "Nothing to change — pass --stop-timeout, --memory, --cpus, "
+            "--keep-warm or --previews"
         )
     for key, low, high in (
         ("stop_timeout_seconds", 1, 86400),
@@ -297,6 +302,7 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
     print(f"  stop timeout  {updated.stop_timeout_seconds}s")
     print(f"  memory        {updated.memory_mb} MB, {updated.cpu_shares:g} CPU")
     print(f"  kept warm     {updated.keep_warm}")
+    print(f"  previews      {'on' if updated.preview_deploys else 'off'}")
     print("  applies to containers started from now on — deploy to apply it")
 
 
@@ -374,10 +380,31 @@ async def cmd_backup(args: argparse.Namespace, settings: Settings) -> None:
         raise DeployProError("Pass --dest, or set DEPLOYPRO_BACKUP_DIR")
     dest.mkdir(parents=True, exist_ok=True)
     keep = args.keep or settings.backup_keep
+    # Recorded, so the System page shows it, when it is the backup directory
+    # the page describes; a copy to somewhere else is the owner's own.
+    run = None
+    if dest == settings.backup_dir:
+        from deploypro.engine import maintenance
+        from deploypro.repositories import maintenance as maintenance_repo
+
+        run = await maintenance_repo.begin("backup", origin="command", worker="cli")
+        if run is None:
+            raise DeployProError("Not now: a backup is already running")
     try:
         result = await backup.take(settings, dest, keep=keep)
-    except backup.BackupSkipped as exc:
-        raise DeployProError(f"Not now: {exc}") from exc
+    except BaseException as exc:
+        if run is not None:
+            await maintenance_repo.fail(run.id, error=f"{type(exc).__name__}: {exc}")
+        if isinstance(exc, backup.BackupSkipped):
+            raise DeployProError(f"Not now: {exc}") from exc
+        raise
+    if run is not None:
+        await maintenance_repo.finish(
+            run.id,
+            summary=f"{result.bytes / 1e6:.0f} MB · {len(result.volumes)} volume(s)",
+            detail={"path": str(result.path), "bytes": result.bytes},
+        )
+        await maintenance.publish_backups(settings)
     print(f"backup written to {result.path}")
     print("  database   deploypro.dump")
     for name in result.volumes:
@@ -400,9 +427,13 @@ async def cmd_restore_volume(args: argparse.Namespace, settings: Settings) -> No
 
 
 async def cmd_housekeeping(args: argparse.Namespace, settings: Settings) -> None:
-    from deploypro.engine import housekeeping
+    from deploypro.engine import maintenance
+    from deploypro.repositories import maintenance as maintenance_repo
 
-    report = await housekeeping.run(settings)
+    run = await maintenance_repo.begin("cleanup", origin="command", worker="cli")
+    if run is None:
+        raise DeployProError("Not now: a clean-up is already running")
+    report = await maintenance.run_cleanup(settings, run)
     removed = report.get("images_removed", [])
     print(f"images removed      {len(removed)}")
     for tag in removed:
@@ -437,8 +468,25 @@ async def cmd_test_alert(args: argparse.Namespace, settings: Settings) -> None:
 
 async def cmd_domain_add(args: argparse.Namespace, settings: Settings) -> None:
     project = await project_repo.resolve(args.project)
+    from deploypro.engine import dns
+
     domain = await project_repo.add_domain(project.id, args.host, primary=args.primary)
     print(f"added {domain.host}")
+    if dns.enabled(settings):
+        # The same path as the dashboard: made on Cloudflare when it can be.
+        outcome = await dns.ensure_record(
+            settings, domain.host, project_slug=project.slug
+        )
+        print(f"  dns             {outcome.detail}")
+        if outcome.made:
+            await project_repo.set_domain_dns(
+                domain.id, zone_id=outcome.zone_id, records=outcome.made
+            )
+        if outcome.made or outcome.already_here:
+            print(
+                f"  then:           deploypro domain verify {project.slug} {domain.host}"
+            )
+            return
     print(f"  point it here:  CNAME {domain.host} -> {settings.deploy_domain}")
     print(f"  then:           deploypro domain verify {project.slug} {domain.host}")
 
@@ -713,15 +761,21 @@ async def cmd_github(args: argparse.Namespace, settings: Settings) -> None:
 def _doctor_housekeeping(settings: Settings) -> None:
     from datetime import UTC, datetime
 
-    from deploypro.engine import backup
-    from deploypro.engine.monitor import disk_used_percent
+    from deploypro.engine import backup, disks
 
-    percent = disk_used_percent(settings.build_root)
-    if percent is not None:
+    for disk in disks.measure(settings):
         flag = (
-            "  over the alert threshold" if percent >= settings.disk_alert_percent else ""
+            "  over the alert threshold"
+            if disk.used_percent >= settings.disk_alert_percent
+            else ""
         )
-        print(f"disk                {percent}% used{flag}")
+        label = {"Disk": "disk", "Server disk": "server disk"}.get(
+            disk.label, "image disk"
+        )
+        print(
+            f"{label:20}{disk.used_percent}% used, {disk.free_gb:.1f} GB free "
+            f"of {disk.total_gb:.0f} GB{flag}"
+        )
     print(
         "alerts              "
         + (
@@ -808,6 +862,11 @@ def _parser() -> argparse.ArgumentParser:
     project_set.add_argument("--cpus", type=float, help="CPU limit, e.g. 2")
     project_set.add_argument(
         "--keep-warm", type=int, help="superseded deployments kept running"
+    )
+    project_set.add_argument(
+        "--previews",
+        choices=["on", "off"],
+        help="whether a push to another branch builds a preview",
     )
     project_set.set_defaults(handler=cmd_project_set)
     project_key = project.add_parser(
