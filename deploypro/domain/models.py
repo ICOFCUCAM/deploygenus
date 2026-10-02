@@ -125,6 +125,9 @@ class Project:
     #: Whether a push to another branch builds a preview. Off, only the
     #: production branch deploys on push (docs/design/proposal-build-queue.md).
     preview_deploys: bool = True
+    #: `NAME=value` lines passed to `docker build --build-arg`: plain switches
+    #: for a Dockerfile's ARG lines, never secrets (domain.build_args).
+    build_args: str = ""
 
 
 @dataclass(frozen=True, slots=True)

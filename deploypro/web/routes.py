@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 from deploypro.adapters import crypto, notify
 from deploypro.config import Settings, get_settings
 from deploypro.deps import SettingsDep, token_matches
+from deploypro.domain import build_args as build_args_rules
 from deploypro.domain import naming, session
 from deploypro.domain.errors import DeployProError
 from deploypro.domain.models import (
@@ -261,6 +262,7 @@ async def save_build(
     keep_warm: Annotated[str, Form()] = "",
     stop_timeout_seconds: Annotated[str, Form()] = "",
     preview_deploys: Annotated[str, Form()] = "",
+    build_args: Annotated[str, Form()] = "",
 ):
     """Configuration → Build. Every field on the page, and only those.
 
@@ -276,6 +278,10 @@ async def save_build(
         parsed_cpu = _cpu(cpu_shares, project.cpu_shares)
     except ValueError as exc:
         return _redirect(back, err=str(exc))
+    try:
+        parsed_args = build_args_rules.parse(build_args)
+    except DeployProError as exc:
+        return _redirect(back, err=exc.message)
     changes: dict = {
         "root_directory": root_directory.strip(),
         "port": parsed_port,
@@ -288,6 +294,7 @@ async def save_build(
         # A checkbox: absent from the post means unticked. Safe here because
         # this handler serves only the Build form, which always carries it.
         "preview_deploys": preview_deploys == "1",
+        "build_args": build_args_rules.to_text(parsed_args),
     }
     # An empty override means "go back to detecting it", which is a real
     # setting and not a missing field — so these are written as NULL.

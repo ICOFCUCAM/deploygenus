@@ -83,6 +83,15 @@
     </div>
   </div>
 
+  <div class="form-group">
+    <h3>Build arguments</h3>
+    <div class="field">
+      <label for="build_args">Arguments <span class="muted">(optional)</span></label>
+      <textarea class="mono-input" id="build_args" name="build_args" rows="3" spellcheck="false" placeholder="WITH_TEXT=1" aria-describedby="build_args_hint">{{ project.build_args }}</textarea>
+      <p class="hint" id="build_args_hint">One <span class="mono">NAME=value</span> per line, for the <span class="mono">ARG</span> switches in the repository’s Dockerfile. They are visible in the built image, so never a password or key: those go under <a href="/projects/{{ project.slug }}/config/environment">Environment</a>. Applies to the next deploy.</p>
+    </div>
+  </div>
+
   <div><button class="btn btn-primary" type="submit">Save</button></div>
 </form>
 {% endblock %}
