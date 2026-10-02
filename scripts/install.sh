@@ -264,7 +264,8 @@ $(printf '\033[32m')DeployPro is running.$(printf '\033[0m')
   1. Copy DEPLOYPRO_MASTER_KEY from $DEPLOYPRO_HOME/.env into a password manager.
   2. Set DEPLOYPRO_ALERT_WEBHOOK_URL in .env (Slack or Discord), then
      'docker compose up -d' and 'deploypro test-alert'.
-  3. Copy /var/backups/deploypro off this server on a schedule (rclone, rsync).
+  3. Copy backups off this server: System → Off-server copy (a Hetzner
+     Storage Box or any SFTP server).
 
   First deploy:
      deploypro project create --name "My app" --repo https://github.com/you/app.git

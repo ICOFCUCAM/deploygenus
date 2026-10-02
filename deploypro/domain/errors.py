@@ -82,3 +82,10 @@ class DnsProviderError(DeployProError):
 
     status_code = 502
     code = "dns_provider_error"
+
+
+class OffsiteError(DeployProError):
+    """The off-server backup target refused or failed a copy or a login."""
+
+    status_code = 502
+    code = "offsite_error"

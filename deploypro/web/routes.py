@@ -782,6 +782,78 @@ async def request_backup(request: Request, settings: SettingsDep):
     )
 
 
+@router.post("/system/offsite")
+async def save_offsite(
+    request: Request,
+    settings: SettingsDep,
+    user: Annotated[str, Form()],
+    host: Annotated[str, Form()] = "",
+    port: Annotated[str, Form()] = "23",
+    folder: Annotated[str, Form()] = "deploypro",
+):
+    """Where backups are copied off the server (engine.offsite)."""
+    signed_in(request)
+    from deploypro.engine import offsite
+
+    try:
+        target = await offsite.configure(
+            settings, user=user, host=host, port=port, folder=folder
+        )
+    except DeployProError as exc:
+        return _redirect("/system#offsite", err=exc.message)
+    if target.connected:
+        return _redirect("/system#offsite", ok=f"Saved. Backups go to {target.address}.")
+    return _redirect(
+        "/system#offsite",
+        ok="Saved. Now enter the Storage Box password once, to install DeployPro's key.",
+    )
+
+
+@router.post("/system/offsite/key")
+async def install_offsite_key(
+    request: Request, settings: SettingsDep, password: Annotated[str, Form()] = ""
+):
+    """The password is used for this request only: never stored or logged."""
+    signed_in(request)
+    from deploypro.engine import offsite
+
+    try:
+        target = await offsite.install_key(settings, password)
+    except DeployProError as exc:
+        return _redirect("/system#offsite", err=exc.message)
+    return _redirect(
+        "/system#offsite",
+        ok=f"Connected to {target.address}. Every backup is now copied there too.",
+    )
+
+
+@router.post("/system/offsite/test")
+async def test_offsite(request: Request, settings: SettingsDep):
+    signed_in(request)
+    from deploypro.engine import offsite
+
+    try:
+        target = await offsite.test(settings)
+    except DeployProError as exc:
+        return _redirect("/system#offsite", err=exc.message)
+    return _redirect(
+        "/system#offsite", ok=f"Connected to {target.address}, folder {target.folder}."
+    )
+
+
+@router.post("/system/offsite/remove")
+async def remove_offsite(request: Request):
+    """Forgets the target and its key. Copies already there stay."""
+    signed_in(request)
+    from deploypro.engine import offsite
+
+    await offsite.remove()
+    return _redirect(
+        "/system#offsite",
+        ok="Off-server copy turned off. Copies already there were left alone.",
+    )
+
+
 @router.post("/system/test-alert")
 async def send_test_alert(request: Request, settings: SettingsDep):
     signed_in(request)
@@ -870,11 +942,13 @@ def _redirect(path: str, *, ok: str = "", err: str = "") -> RedirectResponse:
     adding one so a sentence can survive a redirect would be a table, a
     cleanup job and a shared-state problem in exchange for a tidier URL.
     """
+    # The message goes before any #fragment, or the browser never sends it.
+    path, hash_, fragment = path.partition("#")
     if ok:
         path += ("&" if "?" in path else "?") + "ok=" + quote(ok)
     elif err:
         path += ("&" if "?" in path else "?") + "err=" + quote(err)
-    return RedirectResponse(path, status_code=303)
+    return RedirectResponse(path + hash_ + fragment, status_code=303)
 
 
 def _int(raw: str, fallback: int) -> int:

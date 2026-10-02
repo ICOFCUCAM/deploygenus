@@ -102,6 +102,70 @@
   </form>
   {% endif %}
 
+  <div id="offsite" class="offsite">
+  <dl class="facts" style="margin-top:24px">
+    {{ fact_rows([offsite_fact]) }}
+  </dl>
+  {% macro offsite_form(t) %}
+  <form class="form" method="post" action="/system/offsite" style="margin-top:12px">
+    <div class="fields-2">
+      <div class="field">
+        <label for="os_user">Username</label>
+        <input class="mono-input" type="text" id="os_user" name="user" required value="{{ t.user if t else '' }}" placeholder="u123456" aria-describedby="os_user_hint">
+        <p class="hint" id="os_user_hint">The Storage Box’s username, shown in Hetzner Console.</p>
+      </div>
+      <div class="field">
+        <label for="os_host">Address <span class="muted">(optional for a Storage Box)</span></label>
+        <input class="mono-input" type="text" id="os_host" name="host" value="{{ t.host if t else '' }}" placeholder="u123456.your-storagebox.de">
+      </div>
+    </div>
+    <div class="fields-2">
+      <div class="field">
+        <label for="os_port">Port</label>
+        <input type="text" inputmode="numeric" id="os_port" name="port" value="{{ t.port if t else 23 }}" aria-describedby="os_port_hint">
+        <p class="hint" id="os_port_hint">23 for a Storage Box.</p>
+      </div>
+      <div class="field">
+        <label for="os_folder">Folder</label>
+        <input class="mono-input" type="text" id="os_folder" name="folder" value="{{ t.folder if t else 'deploypro' }}">
+      </div>
+    </div>
+    <div class="actions"><button class="btn{% if not t %} btn-primary{% endif %}" type="submit">{{ 'Save' if t else 'Set up off-server copy' }}</button></div>
+  </form>
+  {% endmacro %}
+  {% if not offsite %}
+    <p class="section-lead">Copy every backup to a Hetzner Storage Box (from about €4 a month) or any server you can reach over SFTP. In Hetzner Console: create a Storage Box, turn on <strong>SSH support</strong>, and set its password. Then enter its username here.</p>
+    {{ offsite_form(none) }}
+  {% else %}
+    {% if not offsite.connected %}
+    <form class="form" method="post" action="/system/offsite/key" style="margin-top:12px">
+      <div class="field">
+        <label for="os_password">Storage Box password</label>
+        <input type="password" id="os_password" name="password" required autocomplete="off" aria-describedby="os_password_hint">
+        <p class="hint" id="os_password_hint">Used once, to install DeployPro’s own key on {{ offsite.address }}. It is not stored.</p>
+      </div>
+      <div class="actions"><button class="btn btn-primary" type="submit">Install key and connect</button></div>
+    </form>
+    <details class="setup" style="margin-top:12px">
+      <summary>Or add the key yourself</summary>
+      <p class="section-lead">Add this line to <span class="mono">.ssh/authorized_keys</span> on {{ offsite.address }}, then test the connection.</p>
+      <pre class="mono key-line">{{ offsite.public_key }}</pre>
+    </details>
+    {% endif %}
+    <div class="actions" style="margin-top:12px">
+      <form method="post" action="/system/offsite/test"><button class="btn" type="submit">Test connection</button></form>
+    </div>
+    <details class="setup" style="margin-top:12px">
+      <summary>Change or turn off</summary>
+      {{ offsite_form(offsite) }}
+      <form method="post" action="/system/offsite/remove" style="margin-top:12px">
+        <button class="btn btn-quiet" type="submit">Turn off off-server copy</button>
+        <span class="hint">Copies already on {{ offsite.host }} stay there.</span>
+      </form>
+    </details>
+  {% endif %}
+  </div>
+
   <dl class="facts" style="margin-top:24px">
     {{ fact_rows([alerts_fact]) }}
   </dl>

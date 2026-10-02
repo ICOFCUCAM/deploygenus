@@ -37,6 +37,7 @@ from deploypro.domain.models import (
     ProcessType,
     Project,
 )
+from deploypro.engine.offsite import Target
 
 # ---------------------------------------------------------------------------
 # Marks
@@ -870,6 +871,7 @@ def backups(
     enabled: bool,
     hour: int,
     now: datetime,
+    offsite: Target | None = None,
 ) -> Backups:
     if not enabled:
         return Backups(
@@ -926,14 +928,47 @@ def backups(
         Fact("Next backup", f"{day} {upcoming:%H:%M} UTC"),
         Fact(
             "Kept on",
+            f"This server ({state.get('dir') or 'the backup directory'}) and "
+            f"{offsite.address}, folder {offsite.folder}",
+        )
+        if offsite is not None and offsite.connected
+        else Fact(
+            "Kept on",
             f"This server only ({state.get('dir') or 'the backup directory'})",
-            note="A backup here is lost with the server. Copy it off: see Setup.",
+            note="A backup here is lost with the server. Set up Off-server copy.",
         ),
     ]
     running = open_run is not None
     return Backups(
         facts, can_start=not running, needed=not recent and not running, running=running
     )
+
+
+def offsite_fact(target: Target | None, now: datetime) -> Fact:
+    """Where backups are copied off the server (engine.offsite)."""
+    label = "Off-server copy"
+    if target is None:
+        return Fact(label, "Not set up", Mark("caution", "Off"))
+    where = f"{target.address}, folder {target.folder}"
+    if not target.connected:
+        return Fact(
+            label,
+            where,
+            Mark("caution", "Not connected"),
+            "Install DeployPro's key below, then each backup is copied there.",
+        )
+    last = target.last or {}
+    at = _parse_time(last.get("at"))
+    if at is None:
+        return Fact(label, f"{where} · connected; the next backup is copied there")
+    if not last.get("ok"):
+        return Fact(
+            label,
+            f"{clock(at, now)} · {last.get('error') or ''}",
+            Mark("failed", "Failed"),
+            f"To {where}. The backup on this server is fine.",
+        )
+    return Fact(label, f"{where} · last copy {clock(at, now)}")
 
 
 def webhook_kind(url: str) -> str:
@@ -981,6 +1016,7 @@ def setup_items(
     alerts_on: bool,
     backup_exists: bool,
     backup_dir: str,
+    offsite_connected: bool = False,
 ) -> list[SetupItem]:
     return [
         SetupItem(
@@ -1009,11 +1045,11 @@ def setup_items(
         SetupItem(
             "offsite",
             "Backups copied off this server",
-            "checklist:offsite" in ticks,
-            f"Copy {backup_dir or '/var/backups/deploypro'} to other storage every "
-            "day, with rsync or rclone on a cron. A backup on this server is lost "
-            "with it.",
-            ticked_by_owner=True,
+            offsite_connected or "checklist:offsite" in ticks,
+            "Set up a Storage Box under Off-server copy, below. A backup on this "
+            f"server is lost with it. (Copying {backup_dir or '/var/backups/deploypro'} "
+            "off some other way? Tick this.)",
+            ticked_by_owner=not offsite_connected,
         ),
     ]
 

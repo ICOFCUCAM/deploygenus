@@ -613,7 +613,8 @@ class TestSystem:
         body = (await client.get("/system")).text
         assert "/opt/deploypro/.env" in body
         assert "DEPLOYPRO_KEEP_IMAGES" in body
-        assert "<input" not in body
+        settings = body.split('id="settings"', 1)[1].split("</section>", 1)[0]
+        assert "<input" not in settings
 
     async def test_without_an_app_it_offers_to_connect_one(self, client, repos):
         body = (await client.get("/system")).text
