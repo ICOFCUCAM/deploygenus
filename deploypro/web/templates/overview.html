@@ -1,28 +1,15 @@
 {% extends "base.html" %}
-{% from "_macros.html" import status, shape, message, action, line, deployment_row, relationship %}
+{% from "_macros.html" import status, shape, icon, message, action, line %}
 {% block title %}{{ project.name }} — DeployPro{% endblock %}
 {% block content %}
-
-<div class="head">
-  <div class="head-main">
-    <h1>{{ project.name }}</h1>
-    <p class="head-sub">
-      {% if address %}<a class="link-out" href="https://{{ address }}" rel="noreferrer">{{ address }}{{ shape('external') }}</a><span class="sep">·</span>{% endif %}
-      <span class="mono">{{ project.github_repo or project.repo_url }}</span><span class="sep">·</span>production branch <span class="branch mono">{{ project.production_branch }}</span>
-      {% if production %}<span class="sep">·</span><span class="tag">{{ shape('branch') }}<span class="word">Production</span></span>{% endif %}
-    </p>
-  </div>
-  <div class="head-state">
-    {{ status(mark, 'status-lg') }}
-    {% if production and production.ready_at %}<p class="as-of">deployed {{ ago(production.ready_at, now) }}</p>{% endif %}
-    <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
-  </div>
-</div>
+{# The project header and tabs come from base.html. Below them, the
+   benchmark's order (amendment-overview-preview.md): what is running, what it
+   looks like, which deployment produced it, what supports it. #}
 {{ message(ok, err) }}
 
 {% if conditions %}
-<section class="section" aria-labelledby="attention">
-  <h2 id="attention">Needs attention</h2>
+<section class="card attention" aria-labelledby="attention">
+  <h2 id="attention" class="card-title">{{ shape('caution') }}Needs attention</h2>
   <ul class="conditions">
     {% for c in conditions %}
     <li class="tone-{{ c.mark.tone }}">{{ shape(c.mark.shape) }}<span style="color:var(--text)">{{ c.text }}</span><a href="{{ c.url }}">Open</a></li>
@@ -31,9 +18,12 @@
 </section>
 {% endif %}
 
+<div class="ov-grid">
+<div class="ov-main">
+
 <div class="ov-top{% if not preview %} ov-top-single{% endif %}">
 {% if preview %}
-<section class="panel ov-preview" aria-labelledby="preview-h">
+<section class="card ov-preview" aria-labelledby="preview-h">
   <h2 id="preview-h" class="visually-hidden">What the live site looks like</h2>
   <input type="radio" name="pv-size" id="pv-desktop" class="visually-hidden" checked>
   <input type="radio" name="pv-size" id="pv-mobile" class="visually-hidden"{% if not preview.has_mobile %} disabled{% endif %}>
@@ -50,8 +40,8 @@
   </div>
   <div class="pv-bar">
     <div class="pv-sizes" role="group" aria-label="Screen size">
-      <label for="pv-desktop">Desktop</label>
-      {% if preview.has_mobile %}<label for="pv-mobile">Mobile</label>{% endif %}
+      <label for="pv-desktop">{{ icon('desktop') }}Desktop</label>
+      {% if preview.has_mobile %}<label for="pv-mobile">{{ icon('mobile') }}Mobile</label>{% endif %}
     </div>
     <p class="pv-caption">
       {{ preview.caption }}
@@ -59,10 +49,10 @@
       {% if preview.state == 'failed' and preview.has_picture %}<br><span class="tone-caution">No new preview: {{ preview.problem }}</span>{% endif %}
     </p>
     <div class="pv-actions">
-      <a href="{{ live_url }}" rel="noreferrer" target="_blank">Open in new tab {{ shape('external') }}</a>
+      <a class="with-icon" href="{{ live_url }}" rel="noreferrer" target="_blank">Open in new tab {{ icon('external') }}</a>
       {% if preview.state != 'pending' %}
       <form method="post" action="/projects/{{ project.slug }}/preview">
-        <button class="btn btn-quiet btn-small" type="submit">{% if preview.state == 'none' %}Capture preview{% elif preview.state == 'failed' %}Retry{% else %}Refresh{% endif %}</button>
+        <button class="btn btn-quiet btn-small with-icon" type="submit">{{ icon('refresh') }}{% if preview.state == 'none' %}Capture preview{% elif preview.state == 'failed' %}Retry{% else %}Refresh{% endif %}</button>
       </form>
       {% endif %}
     </div>
@@ -70,19 +60,18 @@
 </section>
 {% endif %}
 {# Production: the strongest element on the page (Phase 5 §2). #}
-<section class="panel production" aria-labelledby="production">
-  <h2 id="production" class="visually-hidden">Production</h2>
+<section class="card production" aria-labelledby="production">
+  <h2 id="production" class="eyebrow"><span class="pill pill-blue">Production</span></h2>
   <div class="production-top">
-    <div>
       {% if block.state == 'serving' %}
         {{ status(block.mark, 'status-lg') }}
-        {% set v = production_view %}
         <div class="production-id">
           <p class="commit">
             <a href="/deployments/{{ production.short_id }}">#{{ production.number }}</a>
-            · <span class="mono">{{ production.git_sha[:8] }}</span>
-            {% if production.git_message %}· {{ production.git_message }}{% endif %}
+            <span class="with-icon muted">{{ icon('branch') }}<span class="mono">{{ production.git_ref }}</span></span>
+            <span class="mono muted">{{ production.git_sha[:8] }}</span>
           </p>
+          {% if production.git_message %}<p class="production-msg">{{ production.git_message }}</p>{% endif %}
           <p class="muted small">Ready since {{ clock(production.ready_at, now) }} UTC ({{ ago(production.ready_at, now) }})
             {% if block.rolled_back_from %} · Rolled back to #{{ production.number }} from <a href="/deployments/{{ block.rolled_back_from.short_id }}">#{{ block.rolled_back_from.number }}</a>{% endif %}
           </p>
@@ -104,13 +93,12 @@
         <p class="headline">{{ block.headline }}</p>
         <p class="muted small">Repository <span class="mono">{{ project.github_repo or project.repo_url }}</span> · production branch <span class="mono branch">{{ project.production_branch }}</span></p>
       {% endif %}
-    </div>
   </div>
 
   <div class="production-actions">
     {% if block.state == 'serving' and live_url %}
     {# Amendment §2: on a healthy project, looking is the common action. #}
-    <div class="action"><a class="btn btn-primary" href="{{ live_url }}" rel="noreferrer" target="_blank">Open live site {{ shape('external') }}</a></div>
+    <div class="action"><a class="btn btn-primary" href="{{ live_url }}" rel="noreferrer" target="_blank">Open live site {{ icon('external') }}</a></div>
     {{ action(block.primary, 'secondary') }}
     {% else %}
     {{ action(block.primary, 'primary') }}
@@ -118,7 +106,7 @@
     {% for a in block.secondary %}{{ action(a, 'secondary') }}{% endfor %}
     {% if block.state == 'serving' and block.rollback %}
       {% set target, speed = block.rollback %}
-      <div class="action">
+      <div class="action action-rollback">
         <form method="post" action="/deployments/{{ target.short_id }}/promote">
           <button class="btn btn-quiet" type="submit">Roll back to #{{ target.number }}</button>
         </form>
@@ -129,59 +117,35 @@
   {% if production %}
   <nav class="quick" aria-label="Quick links">
     <h3>Quick links</h3>
-    <a href="{{ production_url }}" rel="noreferrer" target="_blank">This deployment’s own address {{ shape('external') }}</a>
-    <a href="/deployments/{{ production.short_id }}">Build and deploy log</a>
-    <a href="/projects/{{ project.slug }}/config/environment">Environment variables</a>
-    <a href="/projects/{{ project.slug }}/config/build">Build settings</a>
+    <a href="{{ production_url }}" rel="noreferrer" target="_blank">{{ icon('external') }}This deployment’s own address</a>
+    <a href="/deployments/{{ production.short_id }}">{{ icon('log') }}Build and deploy log</a>
+    <a href="/projects/{{ project.slug }}/config/environment">{{ icon('code') }}Environment variables</a>
+    <a href="/projects/{{ project.slug }}/config/build">{{ icon('settings') }}Build settings</a>
   </nav>
   {% endif %}
 </section>
+{% if production_view %}
+<div class="card ov-line">{{ line(production_view.nodes, compact=true) }}</div>
+{% endif %}
 </div>
 
-{% if production_view %}
-<div class="ov-line">{{ line(production_view.nodes, compact=true) }}</div>
-{% endif %}
-
-<section class="section ov-stats" aria-label="Deployment numbers">
+<section class="ov-stats" aria-label="Deployment numbers">
   {% for st in stats %}
-  <div class="stat"><p class="stat-label">{{ st.label }}</p><p class="stat-value">{{ st.value }}</p><p class="stat-note">{{ st.note }}</p></div>
+  <div class="card stat">
+    <span class="stat-icon">{{ icon(st.icon) }}</span>
+    <div>
+      <p class="stat-label">{{ st.label }}</p>
+      <p class="stat-value">{{ st.value }}</p>
+      {% if st.trend %}<p class="stat-trend trend-{{ st.trend_sense }}">{{ st.trend }} <span class="muted">vs the week before</span></p>{% endif %}
+      <p class="stat-note">{{ st.note }}</p>
+    </div>
+  </div>
   {% endfor %}
 </section>
 
-<div class="ov-two">
-  <section class="panel ov-card" aria-labelledby="details">
-    <h2 id="details">Project details</h2>
-    <dl class="facts">
-      <dt>Repository</dt><dd class="mono">{{ project.github_repo or project.repo_url }}</dd>
-      <dt>Branch</dt><dd><span class="branch mono">{{ project.production_branch }}</span></dd>
-      <dt>Build</dt><dd>{{ project.framework or 'detected on each build' }}{% if project.root_directory %} · <span class="mono">{{ project.root_directory }}/</span>{% endif %}</dd>
-      <dt>Resources</dt><dd>{{ project.memory_mb }} MB · {{ '%g' % project.cpu_shares }} CPU</dd>
-      <dt>Created</dt><dd>{{ project.created_at.strftime('%-d %b %Y') }}</dd>
-    </dl>
-    {% set c = '/projects/' ~ project.slug ~ '/config' %}
-    <p class="small" style="margin-top:12px"><a href="{{ c }}/environment">Environment</a> · <a href="{{ c }}/storage">Storage</a> · <a href="{{ c }}/build">Build</a> · <a href="{{ c }}/repository">Repository</a></p>
-  </section>
-  <section class="panel ov-card" aria-labelledby="domains">
-    <h2 id="domains">Domains</h2>
-    {% if domains %}
-    <ul class="ov-domains">
-      {% for d, dmark in domains %}
-      <li><span class="mono">{{ d.host }}</span>{{ status(dmark) }}{% if d.is_primary %}<span class="muted small">primary</span>{% endif %}</li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="section-lead">No custom domain yet.</p>
-    {% endif %}
-    <p class="small" style="margin-top:12px"><a href="/projects/{{ project.slug }}/config/domains">Manage domains →</a></p>
-  </section>
-</div>
-
-
-
-
 {% if block.newer and block.state == 'serving' %}
-<section class="section" aria-labelledby="activity">
-  <h2 id="activity">Activity</h2>
+<section class="card ov-activity" aria-labelledby="activity">
+  <h2 id="activity" class="card-title">{{ icon('activity') }}Activity</h2>
   {% set n = block.newer %}
   <div class="summary">
     <span class="summary-label">#{{ n.number }}</span>
@@ -199,52 +163,12 @@
 </section>
 {% endif %}
 
-<section class="section" aria-labelledby="runtime">
-  <h2 id="runtime">Runtime <a class="more" href="/projects/{{ project.slug }}/runtime">Runtime</a></h2>
-  <div class="rows">
-    <div class="summary" style="border-bottom:1px solid var(--hairline)">
-      <span class="summary-label">Web</span>
-      <div class="summary-body">
-        {% if production %}
-          {% if production.container_id %}{{ status({'shape': 'ready', 'word': 'Running', 'tone': 'success'}) }}{% else %}{{ status({'shape': 'failed', 'word': 'Container gone', 'tone': 'failure'}) }}{% endif %}
-          <span>#{{ production.number }}</span>
-        {% else %}<span class="muted">Nothing in production</span>{% endif %}
-      </div>
-      <span></span>
-    </div>
-    <div class="summary" style="border-bottom:1px solid var(--hairline)">
-      <span class="summary-label">Workers</span>
-      <div class="summary-body">
-        {% if workers %}
-          <span>{{ workers | length }} worker{{ '' if workers | length == 1 else 's' }}{% if production %} · follows production #{{ production.number }}{% endif %}</span>
-          {% for p, mark, sentence in workers if not p.enabled %}{{ status(mark) }} <span class="mono">{{ p.name }}</span>{% endfor %}
-        {% else %}<span class="muted">None</span>{% endif %}
-      </div>
-      <a href="/projects/{{ project.slug }}/runtime/workers">Workers</a>
-    </div>
-    <div class="summary" style="border-bottom:1px solid var(--hairline)">
-      <span class="summary-label">Jobs</span>
-      <div class="summary-body">
-        {% for p, run, mark, next_run in jobs %}
-          <span><span class="mono">{{ p.name }}</span>
-          {% if mark %}{{ status(mark) }}{% endif %}
-          {% if run and p.enabled %}{{ clock(run.scheduled_for, now) }}{% endif %}
-          {% if next_run %}· next {{ clock(next_run, now) }}{% endif %}</span>
-        {% else %}<span class="muted">None</span>{% endfor %}
-      </div>
-      <a href="/projects/{{ project.slug }}/runtime/jobs">Jobs</a>
-    </div>
-  </div>
-</section>
-
-
-
-<section class="section" aria-labelledby="recent">
-  <h2 id="recent">Recent deployments {% if recent %}<a class="more" href="/projects/{{ project.slug }}/deployments">All deployments</a>{% endif %}</h2>
+<section class="card ov-recent" aria-labelledby="recent">
+  <h2 id="recent" class="card-title">Recent deployments {% if recent %}<a class="more" href="/projects/{{ project.slug }}/deployments">View all</a>{% endif %}</h2>
   {% if recent %}
   <div class="dtable-wrap">
   <table class="dtable">
-    <thead><tr><th scope="col">#</th><th scope="col">Commit</th><th scope="col">Branch</th><th scope="col">Status</th><th scope="col">Deployed</th><th scope="col">Took</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
+    <thead><tr><th scope="col">#</th><th scope="col">Commit</th><th scope="col">Branch</th><th scope="col">Status</th><th scope="col">Deployed</th><th scope="col">Took</th><th scope="col">Open</th></tr></thead>
     <tbody>
     {% for v in recent %}{% set d = v.d %}
     <tr{% if v.is_current %} class="dtable-current"{% endif %}>
@@ -254,7 +178,7 @@
       <td>{{ status(v.mark) }}{% if v.is_current %} <span class="tag tag-current">{{ shape('current') }}<span class="word">Production</span></span>{% endif %}</td>
       <td title="{{ d.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ ago(d.created_at, now) }}</td>
       <td>{{ v.took or '—' }}</td>
-      <td>{% if v.runtime == 'running' %}<a href="{{ deployment_urls[d.short_id] }}" rel="noreferrer" target="_blank">Open {{ shape('external') }}</a>{% endif %}</td>
+      <td>{% if v.runtime == 'running' %}<a href="{{ deployment_urls[d.short_id] }}" rel="noreferrer" target="_blank">Open {{ icon('external') }}</a>{% endif %}</td>
     </tr>
     {% endfor %}
     </tbody>
@@ -265,6 +189,68 @@
   {% endif %}
 </section>
 
+</div>{# .ov-main #}
+
+<aside class="ov-aside" aria-label="About this project">
+  <section class="card ov-details" aria-labelledby="details">
+    <h2 id="details" class="card-title">{{ icon('details') }}Project details</h2>
+    {% set c = '/projects/' ~ project.slug ~ '/config' %}
+    <dl class="facts facts-rows">
+      <dt>Repository</dt><dd class="with-icon">{{ icon('github') }}<span class="mono">{{ project.github_repo or project.repo_url }}</span></dd>
+      <dt>Branch</dt><dd class="with-icon">{{ icon('branch') }}<span class="branch mono">{{ project.production_branch }}</span></dd>
+      <dt>Build</dt><dd>{{ project.framework or 'detected on each build' }}{% if project.root_directory %} · <span class="mono">{{ project.root_directory }}/</span>{% endif %}</dd>
+      <dt>Created</dt><dd>{{ project.created_at.strftime('%-d %b %Y') }}</dd>
+    </dl>
+    <p class="card-foot"><a class="with-icon" href="{{ c }}">Configuration {{ icon('chevron') }}</a></p>
+  </section>
+
+  <section class="card ov-domains-card" aria-labelledby="domains">
+    <h2 id="domains" class="card-title">{{ icon('globe') }}Domains</h2>
+    {% if domains %}
+    <ul class="ov-domains">
+      {% for d, dmark in domains %}
+      <li><span class="mono">{{ d.host }}</span>{{ status(dmark, 'pill') }}{% if d.is_primary %}<span class="muted small">primary</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="section-lead">No custom domain yet.</p>
+    {% endif %}
+    <p class="card-foot"><a class="with-icon" href="/projects/{{ project.slug }}/config/domains">Manage domains {{ icon('chevron') }}</a></p>
+  </section>
+
+  <section class="card ov-runtime" aria-labelledby="runtime">
+    <h2 id="runtime" class="card-title">{{ icon('server') }}Runtime</h2>
+    <dl class="facts facts-rows">
+      <dt>Web</dt>
+      <dd>
+        {% if production %}
+          {% if production.container_id %}{{ status({'shape': 'ready', 'word': 'Running', 'tone': 'success'}) }}{% else %}{{ status({'shape': 'failed', 'word': 'Container gone', 'tone': 'failure'}) }}{% endif %}
+          <span class="muted">#{{ production.number }}</span>
+        {% else %}<span class="muted">Nothing in production</span>{% endif %}
+      </dd>
+      <dt><a href="/projects/{{ project.slug }}/runtime/workers">Workers</a></dt>
+      <dd>
+        {% if workers %}
+          <span>{{ workers | length }}{% if production %} · follow #{{ production.number }}{% endif %}</span>
+          {% for p, mark, sentence in workers if not p.enabled %}{{ status(mark) }} <span class="mono">{{ p.name }}</span>{% endfor %}
+        {% else %}<span class="muted">None</span>{% endif %}
+      </dd>
+      <dt><a href="/projects/{{ project.slug }}/runtime/jobs">Jobs</a></dt>
+      <dd>
+        {% for p, run, mark, next_run in jobs %}
+          <span class="ov-job"><span class="mono">{{ p.name }}</span>
+          {% if mark %}{{ status(mark) }}{% endif %}
+          {% if next_run %}<span class="muted">next {{ clock(next_run, now) }}</span>{% endif %}</span>
+        {% else %}<span class="muted">None</span>{% endfor %}
+      </dd>
+      <dt><a href="/projects/{{ project.slug }}/config/storage">Storage</a></dt>
+      <dd>{% if volumes %}{{ volumes | length }} mount{{ '' if volumes | length == 1 else 's' }}{% else %}<span class="muted">None</span>{% endif %}</dd>
+      <dt>Resources</dt><dd>{{ project.memory_mb }} MB · {{ '%g' % project.cpu_shares }} CPU</dd>
+    </dl>
+    <p class="card-foot"><a class="with-icon" href="/system">Server details {{ icon('chevron') }}</a></p>
+  </section>
+</aside>
+</div>{# .ov-grid #}
 
 {% endblock %}
 

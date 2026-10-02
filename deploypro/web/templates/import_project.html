@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_macros.html" import message %}
 {% block title %}Import {{ repo.full_name }} — DeployPro{% endblock %}
+{% block crumb %}New project{% endblock %}
 {% block content %}
 <p class="crumbs"><a href="/">Projects</a> › <a href="/projects/new">New project</a> › {{ repo.full_name }}</p>
 <div class="head">

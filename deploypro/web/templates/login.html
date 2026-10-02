@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% from "_macros.html" import message %}
+{% from "_macros.html" import message, icon %}
 {% block title %}Sign in — DeployPro{% endblock %}
 {% block content %}
 <div class="login">
-  <span class="wordmark">DeployPro</span>
+  <span class="wordmark">{{ icon('logo') }}DeployPro</span>
   <p class="tagline">Deployments, on hardware you own.</p>
 
   {{ message('', err) }}

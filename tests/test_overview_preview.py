@@ -105,6 +105,38 @@ class TestStats:
         stats = views.deploy_stats([], NOW)
         assert stats[1].value == "—" and stats[2].value == "—"
 
+    def test_each_number_is_compared_with_the_week_before(self):
+        def dep(days, status, build_s):
+            created = NOW - timedelta(days=days)
+            return fakes.deployment(
+                status=status,
+                created_at=created,
+                started_at=created,
+                built_at=created + timedelta(seconds=build_s),
+            )
+
+        stats = views.deploy_stats(
+            [
+                dep(1, DeploymentStatus.READY, 30),
+                dep(2, DeploymentStatus.READY, 30),
+                dep(8, DeploymentStatus.READY, 60),  # the week before
+                dep(9, DeploymentStatus.FAILED, 60),
+                dep(15, DeploymentStatus.READY, 60),  # older: ignored
+            ],
+            NOW,
+        )
+        assert (stats[0].trend, stats[0].trend_sense) == ("→ 0%", "better")
+        # Builds got faster: down is good news.
+        assert (stats[1].trend, stats[1].trend_sense) == ("↓ 50%", "better")
+        assert (stats[2].trend, stats[2].trend_sense) == ("↑ 50 pts", "better")
+
+    def test_no_trend_without_a_week_before_to_compare(self):
+        created = NOW - timedelta(days=1)
+        stats = views.deploy_stats(
+            [fakes.deployment(created_at=created, started_at=created)], NOW
+        )
+        assert [s.trend for s in stats] == ["", "", ""]
+
 
 class TestAddress:
     def settings(self):
