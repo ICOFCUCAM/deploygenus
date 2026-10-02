@@ -88,3 +88,9 @@ async def _resolve(host: str) -> tuple[str, ...]:
     except socket.gaierror:
         return ()
     return tuple(sorted({info[4][0] for info in infos}))
+
+
+async def resolve(host: str) -> tuple[str, ...]:
+    """Every address `host` resolves to, or () — for code that needs the
+    platform's own addresses (the records made on Cloudflare point there)."""
+    return await _resolve(host)

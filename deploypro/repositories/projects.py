@@ -6,6 +6,8 @@ import secrets
 from typing import Any
 from uuid import UUID
 
+from psycopg.types.json import Jsonb
+
 from deploypro.adapters import db
 from deploypro.domain.errors import Conflict, NotFound
 from deploypro.domain.models import Domain, EnvTarget, EnvVar, Project
@@ -256,7 +258,9 @@ async def delete_env(project_id: UUID, key: str, target: EnvTarget | None) -> in
 # Domains
 # ---------------------------------------------------------------------------
 
-DOMAIN_COLUMNS = "id, project_id, host, verified_at, is_primary, created_at"
+DOMAIN_COLUMNS = (
+    "id, project_id, host, verified_at, is_primary, created_at, dns_zone_id, dns_records"
+)
 
 
 async def add_domain(project_id: UUID, host: str, *, primary: bool) -> Domain:
@@ -305,6 +309,22 @@ async def mark_domain_verified(domain_id: UUID) -> Domain:
         row = await cur.fetchone()
     if row is None:
         raise NotFound(f"No domain with id {domain_id}")
+    return to_domain(row)
+
+
+async def set_domain_dns(
+    domain_id: UUID, *, zone_id: str | None, records: list[dict]
+) -> Domain:
+    """Remember the records DeployPro made for a domain (or that it made none)."""
+    async with db.connection() as conn:
+        cur = await conn.execute(
+            f"UPDATE domains SET dns_zone_id = %s, dns_records = %s WHERE id = %s "
+            f"RETURNING {DOMAIN_COLUMNS}",
+            (zone_id, Jsonb(records), domain_id),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise NotFound("No such domain")
     return to_domain(row)
 
 

@@ -9,7 +9,7 @@ encryption key and writing unencrypted environment variables to disk.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -150,6 +150,15 @@ class Settings:
     backup_hour: int = 3
     backup_keep: int = 7
 
+    # -- Cloudflare DNS ---------------------------------------------------------
+
+    #: The token Traefik uses for the wildcard certificate, read here too so a
+    #: custom domain in a zone it can reach gets its DNS record made
+    #: automatically (docs/design/proposal-cloudflare-dns.md). Empty, or a DNS
+    #: provider other than Cloudflare, leaves every domain on the manual path.
+    cloudflare_token: str = field(default="", repr=False)
+    cloudflare_api_url: str = "https://api.cloudflare.com/client/v4"
+
     # -- GitHub ---------------------------------------------------------------
 
     #: Where GitHub's web pages and its REST API are. Changed only for GitHub
@@ -247,6 +256,11 @@ def get_settings() -> Settings:
         ),
         backup_hour=_int("DEPLOYPRO_BACKUP_HOUR", 3) % 24,
         backup_keep=max(_int("DEPLOYPRO_BACKUP_KEEP", 7), 1),
+        cloudflare_token=(
+            os.environ.get("CF_DNS_API_TOKEN", "")
+            if os.environ.get("DEPLOYPRO_DNS_PROVIDER", "").lower() == "cloudflare"
+            else ""
+        ),
         github_url=_optional("DEPLOYPRO_GITHUB_URL", "https://github.com").rstrip("/"),
         github_api_url=_optional(
             "DEPLOYPRO_GITHUB_API_URL", "https://api.github.com"

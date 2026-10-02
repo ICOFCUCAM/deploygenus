@@ -100,6 +100,8 @@ def to_domain(row: dict[str, Any]) -> Domain:
         verified_at=row["verified_at"],
         is_primary=row["is_primary"],
         created_at=row["created_at"],
+        dns_zone_id=row["dns_zone_id"],
+        dns_records=tuple(row["dns_records"] or ()),
     )
 
 

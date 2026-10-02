@@ -468,8 +468,25 @@ async def cmd_test_alert(args: argparse.Namespace, settings: Settings) -> None:
 
 async def cmd_domain_add(args: argparse.Namespace, settings: Settings) -> None:
     project = await project_repo.resolve(args.project)
+    from deploypro.engine import dns
+
     domain = await project_repo.add_domain(project.id, args.host, primary=args.primary)
     print(f"added {domain.host}")
+    if dns.enabled(settings):
+        # The same path as the dashboard: made on Cloudflare when it can be.
+        outcome = await dns.ensure_record(
+            settings, domain.host, project_slug=project.slug
+        )
+        print(f"  dns             {outcome.detail}")
+        if outcome.made:
+            await project_repo.set_domain_dns(
+                domain.id, zone_id=outcome.zone_id, records=outcome.made
+            )
+        if outcome.made or outcome.already_here:
+            print(
+                f"  then:           deploypro domain verify {project.slug} {domain.host}"
+            )
+            return
     print(f"  point it here:  CNAME {domain.host} -> {settings.deploy_domain}")
     print(f"  then:           deploypro domain verify {project.slug} {domain.host}")
 

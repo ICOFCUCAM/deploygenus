@@ -369,6 +369,22 @@ unverified name would fail its ACME challenge against a rate limit shared by
 every site on the host. Once verified, aliases 301 to the primary, because two
 hostnames serving identical pages is a duplicate-content problem.
 
+**On Cloudflare, the DNS record is made for you.** When `DEPLOYPRO_DNS_PROVIDER`
+is `cloudflare` and the domain is in a zone `CF_DNS_API_TOKEN` can see (*Zone →
+Read*, *DNS → Edit*), adding the domain creates an A record (and AAAA) to this
+server, DNS only, commented `DeployPro: <project>`, and verifies it straight
+away. Everything else stays manual, and says why:
+
+- a domain in a zone the token can't reach (add the zone to the token's *Zone
+  Resources* to change that);
+- a name that already has a record pointing elsewhere: DeployPro never
+  replaces a record it did not make;
+- any DNS provider other than Cloudflare.
+
+Removing the domain deletes the record DeployPro made, only if it is still
+unchanged. The dashboard's **Create DNS record** button does the same for a
+domain added before, or by hand.
+
 ### Workers and scheduled jobs
 
 This is the part Vercel has no answer for. A process is another container from

@@ -18,17 +18,25 @@
     <span class="item-name mono">{{ d.host }}</span>
     <div class="item-body">
       <span>{{ status(mark) }}{% if d.is_primary %} <span class="muted small">primary</span>{% endif %}</span>
+      {% if d.dns_managed %}
+        <span class="muted small">DNS · made on Cloudflare</span>
+      {% endif %}
       {% if not d.is_verified %}
         <span class="muted">Add a CNAME record for <span class="mono">{{ d.host }}</span> pointing to <span class="mono">{{ deploy_domain }}</span>, or an A record to this server’s address, then verify.</span>
       {% endif %}
     </div>
     <div class="item-actions">
       {% if not d.is_verified %}
+      {% if dns_auto and not d.dns_managed %}
+      <form method="post" action="/projects/{{ project.slug }}/domains/{{ d.host }}/dns">
+        <button class="btn btn-small" type="submit">Create DNS record</button>
+      </form>
+      {% endif %}
       <form method="post" action="/projects/{{ project.slug }}/domains/{{ d.host }}/verify">
         <button class="btn btn-small" type="submit">Verify</button>
       </form>
       {% endif %}
-      {{ confirm('Remove', '/projects/' ~ project.slug ~ '/domains/' ~ d.host ~ '/delete', d.host ~ ' stops serving immediately.', 'Remove ' ~ d.host) }}
+      {{ confirm('Remove', '/projects/' ~ project.slug ~ '/domains/' ~ d.host ~ '/delete', d.host ~ ' stops serving immediately.' ~ (' Its DNS record on Cloudflare is deleted too.' if d.dns_managed else ''), 'Remove ' ~ d.host) }}
     </div>
   </li>
   {% endfor %}
@@ -46,6 +54,7 @@
     </div>
     <label class="check"><input type="checkbox" name="primary" value="1"> Make it the primary domain</label>
     <div><button class="btn btn-primary" type="submit">Add domain</button></div>
+    <p class="hint">{% if dns_auto %}A domain in a Cloudflare zone DeployPro can reach gets its DNS record made automatically. Others show the record to add at your DNS provider.{% else %}After adding it, add the DNS record shown at your DNS provider.{% endif %}</p>
   </form>
 </section>
 {% endblock %}

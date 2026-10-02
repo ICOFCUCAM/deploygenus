@@ -39,8 +39,8 @@ from deploypro.domain.storage import (
     normalise_mount_path,
     validate_volume_name,
 )
+from deploypro.engine import dns, routing, service, verify
 from deploypro.engine import promote as promote_engine
-from deploypro.engine import routing, service, verify
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import maintenance as maintenance_repo
@@ -385,13 +385,54 @@ async def add_domain(
             ),
         )
     try:
-        await project_repo.add_domain(project.id, cleaned, primary=bool(primary))
+        domain = await project_repo.add_domain(project.id, cleaned, primary=bool(primary))
     except DeployProError as exc:
         return _redirect(f"/projects/{slug}/config/domains", err=exc.message)
-    return _redirect(
-        f"/projects/{slug}/config/domains",
-        ok=f"Added {cleaned}. Point its DNS here, then verify it.",
+    if not dns.enabled(settings):
+        return _redirect(
+            f"/projects/{slug}/config/domains",
+            ok=f"Added {cleaned}. Point its DNS here, then verify it.",
+        )
+    said = await _make_dns(project, domain, settings)
+    return _redirect(f"/projects/{slug}/config/domains", ok=f"Added {cleaned}. {said}")
+
+
+@router.post("/projects/{slug}/domains/{host}/dns")
+async def create_dns_record(
+    request: Request, slug: str, host: str, settings: SettingsDep
+):
+    """Make the record on Cloudflare for a domain still on the manual path:
+    one added before this existed, or one whose zone the token now reaches."""
+    signed_in(request)
+    project = await project_repo.get_by_slug(slug)
+    domain = {d.host: d for d in await project_repo.list_domains(project.id)}.get(
+        host.lower()
     )
+    if domain is None:
+        return _redirect(
+            f"/projects/{slug}/config/domains", err=f"{host} is not on this project."
+        )
+    return _redirect(
+        f"/projects/{slug}/config/domains", ok=await _make_dns(project, domain, settings)
+    )
+
+
+async def _make_dns(project: Project, domain: Domain, settings: Settings) -> str:
+    """Make the domain's record on Cloudflare when DeployPro can, then verify
+    it straight away. Returns what happened, for the page."""
+    outcome = await dns.ensure_record(settings, domain.host, project_slug=project.slug)
+    if outcome.made:
+        await project_repo.set_domain_dns(
+            domain.id, zone_id=outcome.zone_id, records=outcome.made
+        )
+    if not (outcome.made or outcome.already_here):
+        return outcome.detail
+    result = await verify.verify(domain.host, expected_host=settings.deploy_domain)
+    if not result.verified:
+        return f"{outcome.detail} DNS has not caught up yet; press Verify in a minute."
+    await project_repo.mark_domain_verified(domain.id)
+    await routing.refresh(await project_repo.get(project.id), settings=settings)
+    return f"{outcome.detail} Verified: it serves from now on."
 
 
 @router.post("/projects/{slug}/volumes")
@@ -457,9 +498,15 @@ async def verify_domain(request: Request, slug: str, host: str, settings: Settin
 async def remove_domain(request: Request, slug: str, host: str, settings: SettingsDep):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
+    domain = {d.host: d for d in await project_repo.list_domains(project.id)}.get(
+        host.lower()
+    )
     await project_repo.remove_domain(project.id, host)
     await routing.refresh(await project_repo.get(project.id), settings=settings)
-    return _redirect(f"/projects/{slug}/config/domains", ok=f"Removed {host}.")
+    # After the route is gone: a record removed first would leave the name
+    # still routed here for a moment with nothing pointing at it.
+    said = await dns.remove_records(settings, domain) if domain else ""
+    return _redirect(f"/projects/{slug}/config/domains", ok=f"Removed {host}.{said}")
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ from deploypro.domain.github import repo_from_url
 from deploypro.domain.models import Deployment, EnvTarget, Process, ProcessType, Project
 from deploypro.domain.repo_url import is_ssh_url
 from deploypro.domain.storage import docker_volume_name
+from deploypro.engine import dns
 from deploypro.engine import processes as process_engine
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import github as github_repo
@@ -512,6 +513,8 @@ async def domains_page(
                 for d in domains
             ],
             "deploy_domain": settings.deploy_domain,
+            # Cloudflare can make records: offer it for domains still waiting.
+            "dns_auto": dns.enabled(settings),
             "ok": ok,
             "err": err,
         },
