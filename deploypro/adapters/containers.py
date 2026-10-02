@@ -943,3 +943,81 @@ async def list_process_containers(project_slug: str) -> list[str]:
         for name in (line.strip() for line in out.splitlines())
         if name and draining_deadline(name) is None
     ]
+
+
+# ---------------------------------------------------------------------------
+# Live-site pictures
+# ---------------------------------------------------------------------------
+
+PREVIEW_LABEL = "deploypro.preview"
+
+#: A phone's user agent, for sites that choose their layout by it rather
+#: than by width alone.
+MOBILE_USER_AGENT = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+)
+
+
+async def ensure_image(image: str, *, timeout: int = 900) -> None:
+    """Pull `image` unless it is already here. Separate from the capture so
+    the first one's download is not counted against the capture's time."""
+    try:
+        await _capture(["image", "inspect", "--format", "{{.Id}}", image])
+        return
+    except DockerError:
+        pass
+    await _capture(["pull", "--quiet", image], timeout=timeout)
+
+
+async def screenshot(
+    image: str,
+    url: str,
+    dest: Path,
+    *,
+    width: int,
+    height: int,
+    mobile: bool = False,
+    timeout: int = 45,
+) -> None:
+    """Photograph `url` at `width`×`height` into `dest` (PNG).
+
+    In a container of its own, created and removed for this one picture,
+    memory-capped, on Docker's default network — never DeployPro's, so the
+    browser has no route to the database or to any container that is not
+    public. It is a visitor: it sees what the internet sees.
+
+    `docker cp` writes to this process's filesystem, which is how the file
+    reaches the previews directory without a volume shared with the browser.
+    """
+    name = f"deploypro-preview-{os.urandom(4).hex()}"
+    args = [
+        "create",
+        "--name",
+        name,
+        "--label",
+        f"{PREVIEW_LABEL}=1",
+        "--memory",
+        "512m",
+        "--shm-size",
+        "256m",
+        image,
+        "--no-sandbox",
+        "--disable-gpu",
+        "--hide-scrollbars",
+        "--disable-dev-shm-usage",
+        f"--window-size={width},{height}",
+        # Lets scripts run and pages settle before the picture is taken.
+        "--virtual-time-budget=8000",
+        "--screenshot=/tmp/preview.png",
+    ]
+    if mobile:
+        args.append(f"--user-agent={MOBILE_USER_AGENT}")
+    args.append(url)
+    await _capture(args)
+    try:
+        await _capture(["start", "--attach", name], timeout=timeout)
+        await _capture(["cp", f"{name}:/tmp/preview.png", str(dest)])
+    finally:
+        with contextlib.suppress(DockerError):
+            await _capture(["rm", "--force", name])

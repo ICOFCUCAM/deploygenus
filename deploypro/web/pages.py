@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from deploypro.config import Settings
 from deploypro.deps import SettingsDep
@@ -20,11 +20,12 @@ from deploypro.domain.github import repo_from_url
 from deploypro.domain.models import Deployment, EnvTarget, Process, ProcessType, Project
 from deploypro.domain.repo_url import is_ssh_url
 from deploypro.domain.storage import docker_volume_name
-from deploypro.engine import dns
+from deploypro.engine import dns, previews
 from deploypro.engine import processes as process_engine
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import github as github_repo
 from deploypro.repositories import maintenance as maintenance_repo
+from deploypro.repositories import previews as preview_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
 from deploypro.repositories import volumes as volume_repo
@@ -148,12 +149,29 @@ async def overview_page(
     domains = await project_repo.list_domains(project.id)
     found = views.conditions(project, production, deployments, jobs)
     primary_host = _primary_host(domains, production is not None)
+    now = datetime.now(UTC)
+    week = await deployment_repo.list_for_project(project.id, limit=200)
+    picture = await preview_repo.get(project.id) if previews.enabled(settings) else None
+    captured_number = next(
+        (d.number for d in week if picture and d.id == picture.captured_deployment_id),
+        None,
+    )
+    preview_view = (
+        views.preview(picture, production, captured_number, now)
+        if previews.enabled(settings) and production is not None
+        else None
+    )
     return _project_page(
         request,
         "overview.html",
         project,
         "overview",
         {
+            "preview": preview_view,
+            "stats": views.deploy_stats(week, now),
+            "live_url": f"https://{primary_host}"
+            if primary_host
+            else (settings.deployment_url(production.short_id) if production else ""),
             "production": production,
             "production_view": views.view(production, project, with_line=True)
             if production
@@ -166,6 +184,9 @@ async def overview_page(
             if production
             else "",
             "recent": [views.view(d, project) for d in deployments[:5]],
+            "deployment_urls": {
+                d.short_id: settings.deployment_url(d.short_id) for d in deployments[:5]
+            },
             "workers": [
                 (p, *views.worker_state(p, production)) for p in views.workers(processes)
             ],
@@ -181,10 +202,31 @@ async def overview_page(
                 )
                 for d in domains
             ],
-            "refresh": views.anything_in_progress(deployments, (r for _p, r in jobs)),
+            "refresh": views.anything_in_progress(deployments, (r for _p, r in jobs))
+            or bool(preview_view and preview_view.state == "pending"),
             "ok": ok,
             "err": err,
         },
+    )
+
+
+@router.get("/projects/{slug}/preview/{variant}.png")
+async def preview_picture(
+    request: Request, slug: str, variant: str, settings: SettingsDep
+):
+    """The live-site picture, to signed-in users only: it can show whatever
+    the site shows its visitors, which is not always public."""
+    signed_in(request)
+    project = await project_repo.get_by_slug(slug)
+    row = await preview_repo.get(project.id)
+    name = None
+    if row is not None:
+        name = {"desktop": row.desktop_file, "mobile": row.mobile_file}.get(variant)
+    path = settings.previews_dir / name if name else None
+    if path is None or not path.is_file():
+        return Response(status_code=404)
+    return FileResponse(
+        path, media_type="image/png", headers={"Cache-Control": "private, max-age=60"}
     )
 
 

@@ -150,6 +150,15 @@ class Settings:
     backup_hour: int = 3
     backup_keep: int = 7
 
+    # -- Live-site previews -----------------------------------------------------
+
+    #: The browser image that photographs each project's live site for its
+    #: Overview (docs/design/amendment-overview-preview.md). Empty turns
+    #: previews off.
+    preview_image: str = "zenika/alpine-chrome:latest"
+    #: Where the pictures are kept: written by the worker, read by the api.
+    previews_dir: Path = Path("/var/lib/deploypro/previews")
+
     # -- Cloudflare DNS ---------------------------------------------------------
 
     #: The token Traefik uses for the wildcard certificate, read here too so a
@@ -256,6 +265,12 @@ def get_settings() -> Settings:
         ),
         backup_hour=_int("DEPLOYPRO_BACKUP_HOUR", 3) % 24,
         backup_keep=max(_int("DEPLOYPRO_BACKUP_KEEP", 7), 1),
+        preview_image=os.environ.get(
+            "DEPLOYPRO_PREVIEW_IMAGE", "zenika/alpine-chrome:latest"
+        ).strip(),
+        previews_dir=Path(
+            _optional("DEPLOYPRO_PREVIEWS_DIR", "/var/lib/deploypro/previews")
+        ),
         cloudflare_token=(
             os.environ.get("CF_DNS_API_TOKEN", "")
             if os.environ.get("DEPLOYPRO_DNS_PROVIDER", "").lower() == "cloudflare"

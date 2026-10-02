@@ -15,7 +15,7 @@ from deploypro.adapters import containers
 from deploypro.config import Settings
 from deploypro.domain.errors import Conflict
 from deploypro.domain.models import Deployment, Project
-from deploypro.engine import processes, routing
+from deploypro.engine import previews, processes, routing
 from deploypro.engine.launch import ensure_serving
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
@@ -62,6 +62,9 @@ async def promote(
         )
 
     await reclaim(project, protect={deployment.id}, log=log)
+    # What production now looks like, for the Overview. Requested only; the
+    # worker takes the picture later, and a failure never reaches here.
+    await previews.request(settings, project, deployment)
     return deployment
 
 

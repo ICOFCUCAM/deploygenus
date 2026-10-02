@@ -27,7 +27,15 @@ from datetime import UTC, datetime
 
 from deploypro.adapters import db
 from deploypro.config import get_settings
-from deploypro.engine import backup, maintenance, pipeline, processes, scheduler, service
+from deploypro.engine import (
+    backup,
+    maintenance,
+    pipeline,
+    previews,
+    processes,
+    scheduler,
+    service,
+)
 from deploypro.engine.alerts import Alerts
 from deploypro.engine.monitor import Monitor
 from deploypro.repositories import deployments as deployment_repo
@@ -70,6 +78,9 @@ BACKUP_CHECK_INTERVAL_SECONDS = 60.0
 #: and for runs whose worker stopped under them.
 MAINTENANCE_CHECK_INTERVAL_SECONDS = 5.0
 
+#: How often to look for a live-site picture to take.
+PREVIEW_CHECK_INTERVAL_SECONDS = 5.0
+
 #: Concurrent scheduled jobs per worker. Three rather than one so a slow
 #: nightly job does not delay every other project's, and rather than many
 #: because each one is a container competing for the same host.
@@ -93,6 +104,7 @@ class Worker:
         self._last_monitor = 0.0
         self._last_backup_check = 0.0
         self._last_maintenance_check = 0.0
+        self._last_preview_check = 0.0
         # Not zero: the first tidy-up waits an hour, so a worker restarted in
         # a loop is not also sweeping images in a loop.
         self._last_housekeeping = time.monotonic()
@@ -280,6 +292,14 @@ class Worker:
             "maintenance",
             self._maintenance_requests,
         )
+        # In the background, one at a time: a picture waits on a page load
+        # and a browser, and the job loop must not.
+        self._every(
+            PREVIEW_CHECK_INTERVAL_SECONDS,
+            "_last_preview_check",
+            "preview",
+            self._preview,
+        )
 
         if len(self._jobs) >= JOB_CONCURRENCY:
             await self._idle()
@@ -384,6 +404,10 @@ class Worker:
             return  # one asked for on the System page is already running
         logger.info("taking the daily backup into %s", settings.backup_dir)
         await self._take_backup(run)
+
+    async def _preview(self) -> None:
+        if previews.enabled(self._settings):
+            await previews.capture_next(self._settings)
 
     async def _maintenance_requests(self) -> None:
         """A backup asked for on the System page, and runs left open by a

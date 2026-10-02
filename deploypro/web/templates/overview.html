@@ -9,13 +9,66 @@
     <p class="head-sub">
       {% if address %}<a class="link-out" href="https://{{ address }}" rel="noreferrer">{{ address }}{{ shape('external') }}</a><span class="sep">·</span>{% endif %}
       <span class="mono">{{ project.github_repo or project.repo_url }}</span><span class="sep">·</span>production branch <span class="branch mono">{{ project.production_branch }}</span>
+      {% if production %}<span class="sep">·</span><span class="tag">{{ shape('branch') }}<span class="word">Production</span></span>{% endif %}
     </p>
   </div>
-  <div>{{ status(mark, 'status-lg') }}</div>
-  <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+  <div class="head-state">
+    {{ status(mark, 'status-lg') }}
+    {% if production and production.ready_at %}<p class="as-of">deployed {{ ago(production.ready_at, now) }}</p>{% endif %}
+    <p class="as-of">as of {{ now.strftime('%H:%M') }} UTC</p>
+  </div>
 </div>
 {{ message(ok, err) }}
 
+{% if conditions %}
+<section class="section" aria-labelledby="attention">
+  <h2 id="attention">Needs attention</h2>
+  <ul class="conditions">
+    {% for c in conditions %}
+    <li class="tone-{{ c.mark.tone }}">{{ shape(c.mark.shape) }}<span style="color:var(--text)">{{ c.text }}</span><a href="{{ c.url }}">Open</a></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<div class="ov-top{% if not preview %} ov-top-single{% endif %}">
+{% if preview %}
+<section class="panel ov-preview" aria-labelledby="preview-h">
+  <h2 id="preview-h" class="visually-hidden">What the live site looks like</h2>
+  <input type="radio" name="pv-size" id="pv-desktop" class="visually-hidden" checked>
+  <input type="radio" name="pv-size" id="pv-mobile" class="visually-hidden"{% if not preview.has_mobile %} disabled{% endif %}>
+  <div class="pv-frame{% if preview.state == 'pending' %} pv-pending{% endif %}">
+    {% if preview.has_picture %}
+      <img class="pv-img pv-img-desktop" src="/projects/{{ project.slug }}/preview/desktop.png?v={{ preview.version }}" alt="The live site on a desktop screen, {{ preview.caption }}" width="1440" height="900">
+      {% if preview.has_mobile %}<img class="pv-img pv-img-mobile" src="/projects/{{ project.slug }}/preview/mobile.png?v={{ preview.version }}" alt="The live site on a phone, {{ preview.caption }}" width="390" height="844" loading="lazy">{% endif %}
+    {% endif %}
+    {% if preview.state == 'pending' %}
+      <p class="pv-note"><span class="live">{{ status({'shape': 'building', 'word': 'Capturing preview', 'tone': 'neutral'}) }}</span></p>
+    {% elif not preview.has_picture %}
+      <p class="pv-note">{% if preview.state == 'failed' %}No preview: {{ preview.problem }}{% else %}No preview yet.{% endif %}</p>
+    {% endif %}
+  </div>
+  <div class="pv-bar">
+    <div class="pv-sizes" role="group" aria-label="Screen size">
+      <label for="pv-desktop">Desktop</label>
+      {% if preview.has_mobile %}<label for="pv-mobile">Mobile</label>{% endif %}
+    </div>
+    <p class="pv-caption">
+      {{ preview.caption }}
+      {% if preview.stale %} · older than production #{{ production.number }}{% endif %}
+      {% if preview.state == 'failed' and preview.has_picture %}<br><span class="tone-caution">No new preview: {{ preview.problem }}</span>{% endif %}
+    </p>
+    <div class="pv-actions">
+      <a href="{{ live_url }}" rel="noreferrer" target="_blank">Open in new tab {{ shape('external') }}</a>
+      {% if preview.state != 'pending' %}
+      <form method="post" action="/projects/{{ project.slug }}/preview">
+        <button class="btn btn-quiet btn-small" type="submit">{% if preview.state == 'none' %}Capture preview{% elif preview.state == 'failed' %}Retry{% else %}Refresh{% endif %}</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
 {# Production: the strongest element on the page (Phase 5 §2). #}
 <section class="panel production" aria-labelledby="production">
   <h2 id="production" class="visually-hidden">Production</h2>
@@ -54,12 +107,14 @@
     </div>
   </div>
 
-  {% if production_view %}
-    {{ line(production_view.nodes, compact=true) }}
-  {% endif %}
-
   <div class="production-actions">
+    {% if block.state == 'serving' and live_url %}
+    {# Amendment §2: on a healthy project, looking is the common action. #}
+    <div class="action"><a class="btn btn-primary" href="{{ live_url }}" rel="noreferrer" target="_blank">Open live site {{ shape('external') }}</a></div>
+    {{ action(block.primary, 'secondary') }}
+    {% else %}
     {{ action(block.primary, 'primary') }}
+    {% endif %}
     {% for a in block.secondary %}{{ action(a, 'secondary') }}{% endfor %}
     {% if block.state == 'serving' and block.rollback %}
       {% set target, speed = block.rollback %}
@@ -71,18 +126,58 @@
       </div>
     {% endif %}
   </div>
+  {% if production %}
+  <nav class="quick" aria-label="Quick links">
+    <h3>Quick links</h3>
+    <a href="{{ production_url }}" rel="noreferrer" target="_blank">This deployment’s own address {{ shape('external') }}</a>
+    <a href="/deployments/{{ production.short_id }}">Build and deploy log</a>
+    <a href="/projects/{{ project.slug }}/config/environment">Environment variables</a>
+    <a href="/projects/{{ project.slug }}/config/build">Build settings</a>
+  </nav>
+  {% endif %}
+</section>
+</div>
+
+{% if production_view %}
+<div class="ov-line">{{ line(production_view.nodes, compact=true) }}</div>
+{% endif %}
+
+<section class="section ov-stats" aria-label="Deployment numbers">
+  {% for st in stats %}
+  <div class="stat"><p class="stat-label">{{ st.label }}</p><p class="stat-value">{{ st.value }}</p><p class="stat-note">{{ st.note }}</p></div>
+  {% endfor %}
 </section>
 
-{% if conditions %}
-<section class="section" aria-labelledby="attention">
-  <h2 id="attention">Needs attention</h2>
-  <ul class="conditions">
-    {% for c in conditions %}
-    <li class="tone-{{ c.mark.tone }}">{{ shape(c.mark.shape) }}<span style="color:var(--text)">{{ c.text }}</span><a href="{{ c.url }}">Open</a></li>
-    {% endfor %}
-  </ul>
-</section>
-{% endif %}
+<div class="ov-two">
+  <section class="panel ov-card" aria-labelledby="details">
+    <h2 id="details">Project details</h2>
+    <dl class="facts">
+      <dt>Repository</dt><dd class="mono">{{ project.github_repo or project.repo_url }}</dd>
+      <dt>Branch</dt><dd><span class="branch mono">{{ project.production_branch }}</span></dd>
+      <dt>Build</dt><dd>{{ project.framework or 'detected on each build' }}{% if project.root_directory %} · <span class="mono">{{ project.root_directory }}/</span>{% endif %}</dd>
+      <dt>Resources</dt><dd>{{ project.memory_mb }} MB · {{ '%g' % project.cpu_shares }} CPU</dd>
+      <dt>Created</dt><dd>{{ project.created_at.strftime('%-d %b %Y') }}</dd>
+    </dl>
+    {% set c = '/projects/' ~ project.slug ~ '/config' %}
+    <p class="small" style="margin-top:12px"><a href="{{ c }}/environment">Environment</a> · <a href="{{ c }}/storage">Storage</a> · <a href="{{ c }}/build">Build</a> · <a href="{{ c }}/repository">Repository</a></p>
+  </section>
+  <section class="panel ov-card" aria-labelledby="domains">
+    <h2 id="domains">Domains</h2>
+    {% if domains %}
+    <ul class="ov-domains">
+      {% for d, dmark in domains %}
+      <li><span class="mono">{{ d.host }}</span>{{ status(dmark) }}{% if d.is_primary %}<span class="muted small">primary</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="section-lead">No custom domain yet.</p>
+    {% endif %}
+    <p class="small" style="margin-top:12px"><a href="/projects/{{ project.slug }}/config/domains">Manage domains →</a></p>
+  </section>
+</div>
+
+
+
 
 {% if block.newer and block.state == 'serving' %}
 <section class="section" aria-labelledby="activity">
@@ -142,43 +237,35 @@
   </div>
 </section>
 
-<section class="section" aria-labelledby="domains">
-  <h2 id="domains">Domains <a class="more" href="/projects/{{ project.slug }}/config/domains">Domains</a></h2>
-  {% if domains %}
-  <div class="rows">
-    {% for d, mark in domains %}
-    <div class="summary" style="border-bottom:1px solid var(--hairline)">
-      <span class="mono summary-label" style="color:var(--text)">{{ d.host }}</span>
-      <div class="summary-body">{{ status(mark) }}{% if d.is_primary %}<span class="muted small">primary</span>{% endif %}</div>
-      <span></span>
-    </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  <p class="section-lead">No custom domain. Production has no permanent address until one is added and verified.</p>
-  {% endif %}
-</section>
+
 
 <section class="section" aria-labelledby="recent">
   <h2 id="recent">Recent deployments {% if recent %}<a class="more" href="/projects/{{ project.slug }}/deployments">All deployments</a>{% endif %}</h2>
   {% if recent %}
-  <ul class="rows">{% for v in recent %}{{ deployment_row(v, now) }}{% endfor %}</ul>
+  <div class="dtable-wrap">
+  <table class="dtable">
+    <thead><tr><th scope="col">#</th><th scope="col">Commit</th><th scope="col">Branch</th><th scope="col">Status</th><th scope="col">Deployed</th><th scope="col">Took</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
+    <tbody>
+    {% for v in recent %}{% set d = v.d %}
+    <tr{% if v.is_current %} class="dtable-current"{% endif %}>
+      <td><a href="/deployments/{{ d.short_id }}">#{{ d.number }}</a></td>
+      <td><span class="mono">{{ d.git_sha[:8] }}</span>{% if d.git_message %}<span class="dtable-msg">{{ d.git_message }}</span>{% endif %}</td>
+      <td><span class="branch mono">{{ d.git_ref }}</span></td>
+      <td>{{ status(v.mark) }}{% if v.is_current %} <span class="tag tag-current">{{ shape('current') }}<span class="word">Production</span></span>{% endif %}</td>
+      <td title="{{ d.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ ago(d.created_at, now) }}</td>
+      <td>{{ v.took or '—' }}</td>
+      <td>{% if v.runtime == 'running' %}<a href="{{ deployment_urls[d.short_id] }}" rel="noreferrer" target="_blank">Open {{ shape('external') }}</a>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
   {% else %}
   <p class="section-lead">No deployments yet.</p>
   {% endif %}
 </section>
 
-<section class="section" aria-labelledby="configuration">
-  <h2 id="configuration">Configuration</h2>
-  <p class="section-lead">
-    {% set c = '/projects/' ~ project.slug ~ '/config' %}
-    <a href="{{ c }}/environment">Environment</a> ·
-    <a href="{{ c }}/domains">Domains</a> ·
-    <a href="{{ c }}/storage">Storage</a> ·
-    <a href="{{ c }}/build">Build</a> ·
-    <a href="{{ c }}/repository">Repository</a>
-  </p>
-</section>
+
 {% endblock %}
 
 {% block scripts %}<script src="/static/deploypro.js" defer></script>{% endblock %}

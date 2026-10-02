@@ -864,6 +864,20 @@ def install_maintenance(monkeypatch, state):
     async def clear_state(key):
         state["system"].pop(key, None)
 
+    from deploypro.repositories import previews as preview_repo
+
+    state["preview"] = None
+    state["preview_requests"] = []
+
+    async def preview_get(project_id):
+        return state["preview"]
+
+    async def preview_request(project_id, deployment_id):
+        state["preview_requests"].append(deployment_id)
+
+    monkeypatch.setattr(preview_repo, "get", preview_get)
+    monkeypatch.setattr(preview_repo, "request", preview_request)
+
     for name, fn in {
         "request": request,
         "latest": latest,

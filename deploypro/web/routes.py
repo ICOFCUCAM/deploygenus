@@ -39,11 +39,12 @@ from deploypro.domain.storage import (
     normalise_mount_path,
     validate_volume_name,
 )
-from deploypro.engine import dns, routing, service, verify
+from deploypro.engine import dns, previews, routing, service, verify
 from deploypro.engine import promote as promote_engine
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import maintenance as maintenance_repo
+from deploypro.repositories import previews as preview_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
 from deploypro.repositories import volumes as volume_repo
@@ -639,6 +640,20 @@ def describe_schedule(process) -> str | None:
 # ---------------------------------------------------------------------------
 # Deployments
 # ---------------------------------------------------------------------------
+
+
+@router.post("/projects/{slug}/preview")
+async def refresh_preview(request: Request, slug: str, settings: SettingsDep):
+    """Take a new picture of the live site now."""
+    signed_in(request)
+    project = await project_repo.get_by_slug(slug)
+    if not previews.enabled(settings) or project.production_deployment_id is None:
+        return _redirect(f"/projects/{slug}", err="There is no live site to capture.")
+    await preview_repo.request(project.id, project.production_deployment_id)
+    return _redirect(
+        f"/projects/{slug}",
+        ok="Capturing a new preview. It appears here in a few seconds.",
+    )
 
 
 @router.post("/deployments/{short_id}/promote")
