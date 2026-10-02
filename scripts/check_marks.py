@@ -44,16 +44,16 @@ MARKS = {
 #: (background, {family: colour}) — the tokens from deploypro.css.
 THEMES = {
     "light": (
-        "#f7f5f0",
+        "#f4f6f9",
         {
-            "neutral": "#62676b",
+            "neutral": "#5b6474",
             "success": "#1d7a45",
             "caution": "#8f5b00",
             "failure": "#b3261e",
         },
     ),
     "dark": (
-        "#111315",
+        "#0f1216",
         {
             "neutral": "#a8aaa6",
             "success": "#5fbf8a",

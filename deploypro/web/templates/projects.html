@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_macros.html" import status, shape, message, middle %}
 {% block title %}Projects — DeployPro{% endblock %}
+{% block crumb %}Projects{% endblock %}
 {% block content %}
 
 <div class="head">
@@ -29,18 +30,21 @@
     {% endif %}
   </div>
 {% else %}
-  <ul class="rows" aria-label="Projects">
+  <ul class="pcards" aria-label="Projects">
   {% for r in records %}
     {% set project = r.project %}
-    <li class="record">
-      <div class="record-state">{{ status(r.mark) }}</div>
-      <div><a class="record-name" href="/projects/{{ project.slug }}">{{ project.name }}</a></div>
-      <div class="record-address">
-        {% if r.address %}
-          <a class="link-out" href="https://{{ r.address }}" rel="noreferrer">{{ r.address }}{{ shape('external') }}</a>
-        {% else %}
-          <span class="muted">No permanent address — add a domain</span>
-        {% endif %}
+    <li class="card pcard">
+      <div class="pcard-head">
+        <span class="phead-icon" aria-hidden="true">{{ project.name[:1] | upper }}</span>
+        <div class="pcard-name">
+          <a class="record-name" href="/projects/{{ project.slug }}">{{ project.name }}</a>
+          {% if r.address %}
+            <a class="link-out small" href="https://{{ r.address }}" rel="noreferrer">{{ r.address }}{{ shape('external') }}</a>
+          {% else %}
+            <span class="muted small">No permanent address — add a domain</span>
+          {% endif %}
+        </div>
+        <div class="record-state">{{ status(r.mark, 'pill') }}</div>
       </div>
       <div class="record-lines">
         {% if r.reason %}

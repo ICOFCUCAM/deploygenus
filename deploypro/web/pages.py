@@ -60,10 +60,44 @@ def _primary_host(domains, has_production: bool) -> str | None:
     return verified[0].host if verified else None
 
 
-def _project_page(
-    request: Request, template: str, project: Project, section: str, context: dict
+async def _project_header(project: Project, *, production=None, domains=None, found=None):
+    """What the header above every project page shows: the project's state,
+    its address and when production last changed. The Overview has these
+    already and passes them in; the other pages load them here."""
+    if production is None:
+        production = await _production(project)
+    if domains is None:
+        domains = await project_repo.list_domains(project.id)
+    if found is None:
+        deployments = await deployment_repo.list_for_project(project.id, limit=10)
+        processes = await process_repo.list_for_project(project.id)
+        jobs = await _jobs_with_last_runs(processes)
+        found = views.conditions(project, production, deployments, jobs)
+    return {
+        "mark": views.project_mark(project, found),
+        "address": _primary_host(domains, production is not None),
+        "production": production,
+    }
+
+
+async def _project_page(
+    request: Request,
+    template: str,
+    project: Project,
+    section: str,
+    context: dict,
+    header: dict | None = None,
 ):
-    return render(request, template, {"project": project, "section": section, **context})
+    return render(
+        request,
+        template,
+        {
+            "project": project,
+            "section": section,
+            "header": header or await _project_header(project),
+            **context,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +195,7 @@ async def overview_page(
         if previews.enabled(settings) and production is not None
         else None
     )
-    return _project_page(
+    return await _project_page(
         request,
         "overview.html",
         project,
@@ -169,6 +203,7 @@ async def overview_page(
         {
             "preview": preview_view,
             "stats": views.deploy_stats(week, now),
+            "volumes": await volume_repo.list_for_project(project.id),
             "live_url": f"https://{primary_host}"
             if primary_host
             else (settings.deployment_url(production.short_id) if production else ""),
@@ -207,6 +242,9 @@ async def overview_page(
             "ok": ok,
             "err": err,
         },
+        header=await _project_header(
+            project, production=production, domains=domains, found=found
+        ),
     )
 
 
@@ -244,7 +282,7 @@ async def deployments_page(request: Request, slug: str, ok: str = "", err: str =
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
     deployments = await deployment_repo.list_for_project(project.id, limit=RECENT)
-    return _project_page(
+    return await _project_page(
         request,
         "deployments.html",
         project,
@@ -269,7 +307,7 @@ async def deployment_page(
     production = await _production(project)
     logs = await deployment_repo.read_logs(deployment.id, limit=4000)
     v = views.view(deployment, project, with_line=True)
-    return _project_page(
+    return await _project_page(
         request,
         "deployment.html",
         project,
@@ -326,7 +364,7 @@ async def runtime_page(request: Request, slug: str, settings: SettingsDep):
     project = await project_repo.get_by_slug(slug)
     production, processes = await _runtime_context(project)
     jobs = await _jobs_with_last_runs(processes)
-    return _project_page(
+    return await _project_page(
         request,
         "runtime.html",
         project,
@@ -347,7 +385,7 @@ async def workers_page(request: Request, slug: str, ok: str = "", err: str = "")
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
     production, processes = await _runtime_context(project)
-    return _project_page(
+    return await _project_page(
         request,
         "workers.html",
         project,
@@ -372,7 +410,7 @@ async def jobs_page(request: Request, slug: str, ok: str = "", err: str = ""):
     project = await project_repo.get_by_slug(slug)
     production, processes = await _runtime_context(project)
     jobs = await _jobs_with_last_runs(processes)
-    return _project_page(
+    return await _project_page(
         request,
         "jobs.html",
         project,
@@ -401,7 +439,7 @@ async def worker_page(
         return RedirectResponse(f"/projects/{slug}/runtime/jobs/{name}", status_code=308)
     production = await _production(project)
     mark, sentence = views.worker_state(process, production)
-    return _project_page(
+    return await _project_page(
         request,
         "worker.html",
         project,
@@ -420,7 +458,7 @@ async def job_page(request: Request, slug: str, name: str, ok: str = "", err: st
             f"/projects/{slug}/runtime/workers/{name}", status_code=308
         )
     runs = await process_repo.list_runs(process.id, limit=25)
-    return _project_page(
+    return await _project_page(
         request,
         "job.html",
         project,
@@ -464,7 +502,7 @@ async def config_page(
     variables = await project_repo.list_env(project.id)
     domains = await project_repo.list_domains(project.id)
     volumes = await volume_repo.list_for_project(project.id)
-    return _project_page(
+    return await _project_page(
         request,
         "config.html",
         project,
@@ -507,7 +545,7 @@ async def environment_page(request: Request, slug: str, ok: str = "", err: str =
         for v in scopes[target]
         if v.key in shared
     )
-    return _project_page(
+    return await _project_page(
         request,
         "config_environment.html",
         project,
@@ -537,7 +575,7 @@ async def domains_page(
     production = await _production(project)
     domains = await project_repo.list_domains(project.id)
     primary_host = _primary_host(domains, production is not None)
-    return _project_page(
+    return await _project_page(
         request,
         "config_domains.html",
         project,
@@ -569,7 +607,7 @@ async def storage_page(
 ):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
-    return _project_page(
+    return await _project_page(
         request,
         "config_storage.html",
         project,
@@ -592,7 +630,7 @@ async def build_page(request: Request, slug: str, ok: str = "", err: str = ""):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
     production = await _production(project)
-    return _project_page(
+    return await _project_page(
         request,
         "config_build.html",
         project,
@@ -611,7 +649,7 @@ async def repository_page(
 ):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
-    return _project_page(
+    return await _project_page(
         request,
         "config_repository.html",
         project,

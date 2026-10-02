@@ -1029,36 +1029,94 @@ class Stat:
     label: str
     value: str
     note: str
+    #: The tile's icon, by name (`_macros.html` icon()).
+    icon: str = ""
+    #: The change from the 7 days before, e.g. "↑ 50%", or "" when there is
+    #: nothing recorded to compare with.
+    trend: str = ""
+    #: "better" or "worse": whether the change is good news.
+    trend_sense: str = ""
 
 
 STAT_WINDOW = timedelta(days=7)
 
 
-def deploy_stats(deployments: Sequence[Deployment], now: datetime) -> list[Stat]:
-    """Only numbers DeployPro records. Response time and uptime are absent
-    because nothing keeps their history; a number nobody measured would be
-    invented (amendment §3)."""
-    recent = [d for d in deployments if now - d.created_at <= STAT_WINDOW]
+def _window_numbers(deployments: Sequence[Deployment]):
     builds = [
         (d.built_at - d.started_at).total_seconds()
-        for d in recent
+        for d in deployments
         if d.started_at and d.built_at
     ]
     finished = [
-        d for d in recent if d.status in (DeploymentStatus.READY, DeploymentStatus.FAILED)
+        d
+        for d in deployments
+        if d.status in (DeploymentStatus.READY, DeploymentStatus.FAILED)
     ]
     ready = sum(1 for d in finished if d.status is DeploymentStatus.READY)
+    return (
+        len(deployments),
+        sum(builds) / len(builds) if builds else None,
+        ready,
+        len(finished),
+    )
+
+
+def _percent_change(now: float, before: float) -> tuple[str, int]:
+    change = round(100 * (now - before) / before)
+    arrow = "↑" if change > 0 else "↓" if change < 0 else "→"
+    return f"{arrow} {abs(change)}%", change
+
+
+def deploy_stats(deployments: Sequence[Deployment], now: datetime) -> list[Stat]:
+    """Only numbers DeployPro records. Response time and uptime are absent
+    because nothing keeps their history; a number nobody measured would be
+    invented (amendment §3). Each number is compared with the 7 days before,
+    when those days recorded anything to compare with."""
+    recent = [d for d in deployments if now - d.created_at <= STAT_WINDOW]
+    before = [
+        d for d in deployments if STAT_WINDOW < now - d.created_at <= 2 * STAT_WINDOW
+    ]
+    count, build, ready, finished = _window_numbers(recent)
+    count_b, build_b, ready_b, finished_b = _window_numbers(before)
+
+    count_trend, count_sense = "", ""
+    if count_b:
+        count_trend, change = _percent_change(count, count_b)
+        count_sense = "better" if change >= 0 else "worse"
+    build_trend, build_sense = "", ""
+    if build is not None and build_b:
+        build_trend, change = _percent_change(build, build_b)
+        build_sense = "better" if change <= 0 else "worse"
+    rate_trend, rate_sense = "", ""
+    if finished and finished_b:
+        points = round(100 * ready / finished) - round(100 * ready_b / finished_b)
+        arrow = "↑" if points > 0 else "↓" if points < 0 else "→"
+        rate_trend = f"{arrow} {abs(points)} pts"
+        rate_sense = "better" if points >= 0 else "worse"
     return [
-        Stat("Deployments", str(len(recent)), "last 7 days"),
+        Stat(
+            "Deployments",
+            str(count),
+            "last 7 days",
+            "deploy",
+            count_trend,
+            count_sense,
+        ),
         Stat(
             "Average build",
-            duration(sum(builds) / len(builds)) if builds else "—",
+            duration(build) if build is not None else "—",
             "last 7 days",
+            "clock",
+            build_trend,
+            build_sense,
         ),
         Stat(
             "Success rate",
-            f"{round(100 * ready / len(finished))}%" if finished else "—",
-            f"{ready} of {len(finished)} finished, last 7 days",
+            f"{round(100 * ready / finished)}%" if finished else "—",
+            f"{ready} of {finished} finished, last 7 days",
+            "check",
+            rate_trend,
+            rate_sense,
         ),
     ]
 

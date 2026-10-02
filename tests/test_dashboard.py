@@ -466,7 +466,9 @@ class TestDeployButton:
         # Shortened in the middle for the eye; whole in the button's text.
         assert '<span class="middle-head">Deploy claude/adoring-</span>' in body
         assert '<span class="middle-tail">mayer-yfghmg</span>' in body
-        assert f'production branch <span class="branch mono">{branch}</span>' in body
+        assert (
+            f'Production branch </span><span class="branch mono">{branch}</span>' in body
+        )
 
 
 class TestRuntime:

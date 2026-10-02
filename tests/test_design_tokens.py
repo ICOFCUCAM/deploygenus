@@ -117,3 +117,26 @@ def test_the_greyscale_shape_check_passes():
     script = Path(__file__).parent.parent / "scripts" / "check_marks.py"
     result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("palette", [LIGHT, DARK], ids=["light", "dark"])
+@pytest.mark.parametrize(
+    ("word", "tint"),
+    [
+        ("success", "success-tint"),
+        ("caution", "caution-tint"),
+        ("failure", "failure-tint"),
+        ("neutral", "neutral-tint"),
+        ("blue", "blue-tint"),
+    ],
+)
+def test_a_pill_word_passes_aa_on_its_tint(palette, word, tint):
+    """The benchmark's pills set a status word on its family's tint."""
+    assert ratio(palette[word], palette[tint]) >= 4.5
+
+
+@pytest.mark.parametrize("palette", [LIGHT, DARK], ids=["light", "dark"])
+def test_the_sidebar_text_passes_aa(palette):
+    for text in ("side-text", "side-muted"):
+        for background in ("side-bg", "side-hover"):
+            assert ratio(palette[text], palette[background]) >= 4.5, (text, background)

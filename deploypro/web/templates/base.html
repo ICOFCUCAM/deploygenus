@@ -1,4 +1,4 @@
-{% from "_macros.html" import message %}<!doctype html>
+{% from "_macros.html" import message, icon, status %}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -10,63 +10,125 @@
 {%- if refresh %}
 <meta http-equiv="refresh" content="15">
 {%- endif %}
+{#- The light/dark choice, applied before the first paint so the page never
+    flashes the other theme. Without a stored choice the system's applies. #}
+<script>try{var t=localStorage.getItem('deploypro-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
 {% block head %}{% endblock %}
 <link rel="preload" href="/static/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/deploypro.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1.5 14.5 8 8 14.5 1.5 8z' fill='%232457D6'/></svg>">
 </head>
-<body>
+<body{% if show_nav %} class="app"{% endif %}>
 <a class="skip" href="#main">Skip to content</a>
 {% if show_nav %}
-<header class="bar">
-  <div class="bar-inner">
-    <a class="wordmark" href="/">DeployPro</a>
-    <nav class="bar-nav" aria-label="DeployPro">
-      <a href="/"{% if section is not defined %} aria-current="page"{% endif %}>Projects</a>
-      <a href="/system"{% if section == 'system' %} aria-current="page"{% endif %}>System</a>
-    </nav>
-    <a class="bar-out" href="/logout">Sign out</a>
+{% set path = request.url.path %}
+{% macro app_links() -%}
+<ul class="snav">
+  <li><a href="/"{% if path == '/' or path.startswith('/projects/') and not path.startswith('/projects/new') or path.startswith('/deployments/') %} aria-current="page"{% endif %}>{{ icon('projects') }}<span>Projects</span></a></li>
+  <li><a href="/projects/new"{% if path.startswith('/projects/new') %} aria-current="page"{% endif %}>{{ icon('plus') }}<span>New project</span></a></li>
+</ul>
+<p class="snav-group">Server</p>
+<ul class="snav">
+  <li><a href="/system"{% if path == '/system' %} aria-current="page"{% endif %}>{{ icon('server') }}<span>System</span></a></li>
+  <li><a href="/github/connect"{% if path.startswith('/github') %} aria-current="page"{% endif %}>{{ icon('github') }}<span>GitHub</span></a></li>
+</ul>
+{%- endmacro %}
+<aside class="sidebar">
+  <a class="brand" href="/">{{ icon('logo') }}<span>DeployPro</span></a>
+  <nav aria-label="DeployPro">{{ app_links() }}</nav>
+  <div class="sidebar-foot">
+    <a class="snav-out" href="/logout">{{ icon('signout') }}<span>Sign out</span></a>
   </div>
+</aside>
+{% endif %}
+
+<div class="{% if show_nav %}app-main{% else %}frame{% endif %}">
+{% if show_nav %}
+<header class="topbar">
+  <details class="mnav">
+    <summary aria-label="Menu">{{ icon('menu') }}</summary>
+    <nav aria-label="DeployPro menu">{{ app_links() }}<ul class="snav"><li><a href="/logout">{{ icon('signout') }}<span>Sign out</span></a></li></ul></nav>
+  </details>
+  <a class="brand brand-top" href="/">{{ icon('logo') }}<span>DeployPro</span></a>
+  {% if project is defined and section is defined %}
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Projects</a><span aria-hidden="true">›</span><a href="/projects/{{ project.slug }}"{% if section == 'overview' %} aria-current="page"{% endif %}>{{ project.name }}</a></nav>
+  {% else %}
+  <nav class="crumbs" aria-label="Breadcrumb"><span class="crumb-here">{% block crumb %}{% endblock %}</span></nav>
+  {% endif %}
+  <button class="theme-toggle" type="button" hidden aria-label="Switch between light and dark">{{ icon('theme') }}</button>
 </header>
 {% endif %}
 
-<div class="frame{% if project is defined and section is defined and show_nav %} frame-project{% endif %}">
+<main class="page" id="main">
 {% if project is defined and section is defined and show_nav %}
   {% set nav_base = '/projects/' ~ project.slug %}
-  {% set nav_items = [
-      ('overview', 'Overview', nav_base, 0),
-      ('deployments', 'Deployments', nav_base ~ '/deployments', 0),
-      ('runtime', 'Runtime', nav_base ~ '/runtime', 0),
-      ('workers', 'Workers', nav_base ~ '/runtime/workers', 1),
-      ('jobs', 'Jobs', nav_base ~ '/runtime/jobs', 1),
-      ('config', 'Configuration', nav_base ~ '/config', 0),
-      ('environment', 'Environment', nav_base ~ '/config/environment', 1),
-      ('domains', 'Domains', nav_base ~ '/config/domains', 1),
-      ('storage', 'Storage', nav_base ~ '/config/storage', 1),
-      ('build', 'Build', nav_base ~ '/config/build', 1),
-      ('repository', 'Repository', nav_base ~ '/config/repository', 1),
-  ] %}
-  {% set nav_current = (nav_items | selectattr(0, 'equalto', section) | first)[1] %}
-  {% macro project_links() -%}
-  <a class="nav-project" href="{{ nav_base }}">{{ project.name }}</a>
-  <ul>
-    {%- for key, label, href, depth in nav_items %}
-    <li class="depth-{{ depth }}"><a href="{{ href }}"{% if key == section %} aria-current="page"{% endif %}>{{ label }}</a></li>
-    {%- endfor %}
-  </ul>
-  {%- endmacro %}
-  <nav class="side" aria-label="Project">{{ project_links() }}</nav>
-  <details class="side-menu">
-    <summary>{{ project.name }} · {{ nav_current }}</summary>
-    <nav aria-label="Project menu">{{ project_links() }}</nav>
-  </details>
+  {% set h = header %}
+  <div class="phead">
+    <span class="phead-icon" aria-hidden="true">{{ project.name[:1] | upper }}</span>
+    <div class="phead-main">
+      {% if section == 'overview' %}<h1 class="phead-name">{{ project.name }}</h1>{% else %}<p class="phead-name"><a href="{{ nav_base }}">{{ project.name }}</a></p>{% endif %}
+      <p class="phead-meta">
+        {% if h.address %}<a class="phead-item" href="https://{{ h.address }}" rel="noreferrer">{{ h.address }}{{ icon('external') }}</a>{% endif %}
+        <span class="phead-item">{{ icon('github') }}<span class="mono">{{ project.github_repo or project.repo_url }}</span></span>
+        <span class="phead-item" title="Production branch">{{ icon('branch') }}<span class="visually-hidden">Production branch </span><span class="branch mono">{{ project.production_branch }}</span></span>
+        {% if h.production %}<span class="pill pill-blue">{{ icon('deploy') }}Production</span>{% endif %}
+      </p>
+    </div>
+    <div class="phead-state">
+      {{ status(h.mark, 'pill') }}
+      {% if h.production and h.production.ready_at %}<p class="as-of">Deployed {{ ago(h.production.ready_at, now) }}</p>{% endif %}
+    </div>
+  </div>
+  {% set tab_of = {
+      'overview': 'overview', 'deployments': 'deployments',
+      'runtime': 'runtime', 'workers': 'runtime', 'jobs': 'runtime',
+      'config': 'config', 'environment': 'config', 'storage': 'config',
+      'build': 'config', 'repository': 'config', 'domains': 'domains'} %}
+  {% set tab = tab_of.get(section, section) %}
+  <nav class="tabs" aria-label="Project">
+    {% for key, label, href in [
+        ('overview', 'Overview', nav_base),
+        ('deployments', 'Deployments', nav_base ~ '/deployments'),
+        ('runtime', 'Runtime', nav_base ~ '/runtime'),
+        ('config', 'Configuration', nav_base ~ '/config'),
+        ('domains', 'Domains', nav_base ~ '/config/domains')] %}
+    <a href="{{ href }}"{% if key == tab %} aria-current="{{ 'page' if key == section else 'true' }}"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  {% if tab in ('runtime', 'config') %}
+  <nav class="subtabs" aria-label="{{ 'Runtime' if tab == 'runtime' else 'Configuration' }}">
+    {% if tab == 'runtime' %}
+      {% set subs = [('runtime', 'Summary', nav_base ~ '/runtime'), ('workers', 'Workers', nav_base ~ '/runtime/workers'), ('jobs', 'Jobs', nav_base ~ '/runtime/jobs')] %}
+    {% else %}
+      {% set subs = [('config', 'Summary', nav_base ~ '/config'), ('environment', 'Environment', nav_base ~ '/config/environment'), ('storage', 'Storage', nav_base ~ '/config/storage'), ('build', 'Build', nav_base ~ '/config/build'), ('repository', 'Repository', nav_base ~ '/config/repository')] %}
+    {% endif %}
+    {% for key, label, href in subs %}
+    <a href="{{ href }}"{% if key == section %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
 {% endif %}
-
-<main class="page" id="main">
   {% block content %}{% endblock %}
 </main>
 </div>
 
+{% if show_nav %}
+<script>
+(function () {
+  var b = document.querySelector('.theme-toggle');
+  if (!b) return;
+  b.hidden = false;
+  b.addEventListener('click', function () {
+    var root = document.documentElement;
+    var dark = root.getAttribute('data-theme') === 'dark' ||
+      (!root.getAttribute('data-theme') && matchMedia('(prefers-color-scheme: dark)').matches);
+    var next = dark ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('deploypro-theme', next); } catch (e) {}
+  });
+})();
+</script>
+{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>
