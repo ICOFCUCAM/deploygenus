@@ -889,3 +889,26 @@ def install_maintenance(monkeypatch, state):
         "clear_state": clear_state,
     }.items():
         monkeypatch.setattr(repo, name, fn)
+
+
+class TestAssets:
+    """Regression (October 2026): the redesign shipped new markup while
+    browsers kept the old stylesheet, and every icon — sized only by CSS —
+    filled the screen."""
+
+    async def test_the_stylesheet_address_changes_with_its_contents(self, client, repos):
+        import re
+
+        body = (await client.get("/")).text
+        assert re.search(r'href="/static/deploypro\.css\?v=[0-9a-f]{10}"', body)
+
+    async def test_every_icon_has_a_size_without_css(self, client, repos):
+        import re
+
+        page = (await client.get("/projects/blog")).text
+        body = page.split("<body", 1)[1]  # the tab icon in <head> is not drawn
+        svgs = re.findall(r"<svg[^>]*>", body)
+        assert svgs
+        assert all('width="' in tag and 'height="' in tag for tag in svgs), [
+            tag for tag in svgs if 'width="' not in tag
+        ][:3]

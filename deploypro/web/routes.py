@@ -9,6 +9,8 @@ page is complete without it.
 
 from __future__ import annotations
 
+import functools
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -52,11 +54,31 @@ from deploypro.web import views
 
 HERE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
+
+
+def asset(name: str) -> str:
+    """`/static/<name>?v=<content hash>`: a new address whenever the file
+    changes, so an update never runs against a stylesheet or script the
+    browser cached from the version before.
+
+    Regression (October 2026): the redesign shipped new markup with the old
+    stylesheet still cached, and every icon, sized only by CSS, grew to fill
+    the screen.
+    """
+    path = HERE / "static" / name
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:10]
+    except OSError:
+        return f"/static/{name}"
+    return f"/static/{name}?v={digest}"
+
+
 templates.env.globals.update(
     split_label=views.split_label,
     clock=views.clock,
     duration=views.duration,
     ago=views.ago,
+    asset=functools.cache(asset),
 )
 
 router = APIRouter(include_in_schema=False)

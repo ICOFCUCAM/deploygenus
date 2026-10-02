@@ -15,7 +15,7 @@
 <script>try{var t=localStorage.getItem('deploypro-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
 {% block head %}{% endblock %}
 <link rel="preload" href="/static/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/static/deploypro.css">
+<link rel="stylesheet" href="{{ asset('deploypro.css') }}">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1.5 14.5 8 8 14.5 1.5 8z' fill='%232457D6'/></svg>">
 </head>
 <body{% if show_nav %} class="app"{% endif %}>
