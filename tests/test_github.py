@@ -450,6 +450,56 @@ class TestImporting:
         response = await client.get("/projects/new?q=sho")
         assert "you/shop" in response.text and "you/notes" not in response.text
 
+    def three(self, monkeypatch):
+        monkeypatch.setattr(
+            engine,
+            "list_repositories",
+            lambda settings: _async(
+                [
+                    engine.Repository(
+                        "you/zoo", True, "main", "2026-10-02T08:00:00Z", "", 42
+                    ),
+                    engine.Repository(
+                        "you/ant", False, "main", "2026-09-01T00:00:00Z", "", 42
+                    ),
+                    engine.Repository("you/bee", True, "main", "", "", 42),
+                ]
+            ),
+        )
+
+    async def test_the_page_says_who_github_is_connected_as(
+        self, client, connected, monkeypatch
+    ):
+        self.three(monkeypatch)
+        body = (await client.get("/projects/new")).text
+        assert "GitHub connected" in body
+        assert 'Connected as <strong class="np-login">you</strong>' in body
+        assert 'All <span class="np-count">3</span>' in body
+        assert 'Private <span class="np-count">2</span>' in body
+        assert 'Public <span class="np-count">1</span>' in body
+
+    async def test_visibility_filters_and_sort_by_name(
+        self, client, connected, monkeypatch
+    ):
+        self.three(monkeypatch)
+        body = (await client.get("/projects/new?vis=public")).text
+        assert "you/ant" in body and "you/zoo" not in body
+        body = (await client.get("/projects/new?vis=private&sort=name")).text
+        assert "you/ant" not in body
+        assert body.index("you/bee") < body.index("you/zoo")
+        # Most recently pushed first by default.
+        body = (await client.get("/projects/new?vis=nonsense")).text
+        assert body.index("you/zoo") < body.index("you/ant")
+
+    def test_last_push_reads_as_time_ago(self):
+        from deploypro.web.github import pushed_ago
+
+        now = datetime(2026, 10, 2, 10, 0, tzinfo=UTC)
+        assert pushed_ago("2026-10-02T08:00:00Z", now) == "2 hours ago"
+        assert pushed_ago("2026-10-01T10:00:00Z", now) == "1 day ago"
+        assert pushed_ago("2026-10-02T09:59:30Z", now) == "just now"
+        assert pushed_ago("", now) == ""
+
     async def test_import_suggests_main_over_a_stray_default_branch(
         self, client, connected, monkeypatch
     ):

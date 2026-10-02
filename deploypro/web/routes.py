@@ -169,12 +169,18 @@ async def logout():
 
 @router.get("/projects/new", response_class=HTMLResponse)
 async def new_project_form(
-    request: Request, settings: SettingsDep, q: str = "", ok: str = "", err: str = ""
+    request: Request,
+    settings: SettingsDep,
+    q: str = "",
+    vis: str = "all",
+    sort: str = "pushed",
+    ok: str = "",
+    err: str = "",
 ):
     signed_in(request)
     from deploypro.web.github import new_project_context
 
-    context = await new_project_context(settings, q=q)
+    context = await new_project_context(settings, q=q, vis=vis, sort=sort)
     return _render(request, "new_project.html", {**context, "ok": ok, "err": err})
 
 
