@@ -96,6 +96,7 @@ class TestStats:
             "Deployments",
             "Average build",
             "Success rate",
+            "Time to live",
         ]
         assert stats[0].value == "3"
         assert stats[1].value == "4m 10s"
@@ -103,7 +104,21 @@ class TestStats:
 
     def test_no_deployments_is_a_dash_not_a_zero(self):
         stats = views.deploy_stats([], NOW)
-        assert stats[1].value == "—" and stats[2].value == "—"
+        assert [s.value for s in stats[1:]] == ["—", "—", "—"]
+
+    def test_time_to_live_is_queued_to_serving(self):
+        created = NOW - timedelta(days=1)
+        stats = views.deploy_stats(
+            [
+                fakes.deployment(
+                    status=DeploymentStatus.READY,
+                    created_at=created,
+                    ready_at=created + timedelta(seconds=75),
+                )
+            ],
+            NOW,
+        )
+        assert stats[3].label == "Time to live" and stats[3].value == "1m 15s"
 
     def test_each_number_is_compared_with_the_week_before(self):
         def dep(days, status, build_s):
@@ -135,7 +150,7 @@ class TestStats:
         stats = views.deploy_stats(
             [fakes.deployment(created_at=created, started_at=created)], NOW
         )
-        assert [s.trend for s in stats] == ["", "", ""]
+        assert [s.trend for s in stats] == ["", "", "", ""]
 
 
 class TestAddress:

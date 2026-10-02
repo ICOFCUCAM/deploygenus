@@ -1061,6 +1061,16 @@ def _window_numbers(deployments: Sequence[Deployment]):
     )
 
 
+def _time_to_live(deployments: Sequence[Deployment]) -> float | None:
+    """Average seconds from a deployment being queued to it serving."""
+    spans = [
+        (d.ready_at - d.created_at).total_seconds()
+        for d in deployments
+        if d.ready_at and d.status is DeploymentStatus.READY
+    ]
+    return sum(spans) / len(spans) if spans else None
+
+
 def _percent_change(now: float, before: float) -> tuple[str, int]:
     change = round(100 * (now - before) / before)
     arrow = "↑" if change > 0 else "↓" if change < 0 else "→"
@@ -1093,6 +1103,11 @@ def deploy_stats(deployments: Sequence[Deployment], now: datetime) -> list[Stat]
         arrow = "↑" if points > 0 else "↓" if points < 0 else "→"
         rate_trend = f"{arrow} {abs(points)} pts"
         rate_sense = "better" if points >= 0 else "worse"
+    live, live_b = _time_to_live(recent), _time_to_live(before)
+    live_trend, live_sense = "", ""
+    if live is not None and live_b:
+        live_trend, change = _percent_change(live, live_b)
+        live_sense = "better" if change <= 0 else "worse"
     return [
         Stat(
             "Deployments",
@@ -1113,10 +1128,18 @@ def deploy_stats(deployments: Sequence[Deployment], now: datetime) -> list[Stat]
         Stat(
             "Success rate",
             f"{round(100 * ready / finished)}%" if finished else "—",
-            f"{ready} of {finished} finished, last 7 days",
+            f"{ready} of {finished} · last 7 days",
             "check",
             rate_trend,
             rate_sense,
+        ),
+        Stat(
+            "Time to live",
+            duration(live) if live is not None else "—",
+            "last 7 days",
+            "bolt",
+            live_trend,
+            live_sense,
         ),
     ]
 
