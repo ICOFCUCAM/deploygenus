@@ -18,6 +18,7 @@ from pathlib import Path
 
 from deploypro.adapters import containers, source
 from deploypro.config import Settings
+from deploypro.domain import build_args as build_args_rules
 from deploypro.domain import naming
 from deploypro.domain.detect import Overrides, detect
 from deploypro.domain.errors import Conflict, DeployProError
@@ -232,11 +233,17 @@ async def _build(
     )
 
     await log.system(f"building image {image_tag}")
+    build_args = build_args_rules.parse(project.build_args)
+    if build_args:
+        await log.system(
+            "build arguments: " + ", ".join(f"{k}={v}" for k, v in build_args.items())
+        )
     await containers.build(
         context=app_dir,
         dockerfile=dockerfile,
         tag=image_tag,
         secret_env_file=secret_file,
+        build_args=build_args,
         log=log.sink(LogStream.BUILD),
         timeout=settings.build_timeout_seconds,
         labels={

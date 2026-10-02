@@ -95,6 +95,7 @@ async def build(
     log: LogSink,
     timeout: int,
     labels: dict[str, str] | None = None,
+    build_args: dict[str, str] | None = None,
 ) -> None:
     """Build an image, streaming every line to `log` as it happens.
 
@@ -117,6 +118,10 @@ async def build(
     ]
     if secret_env_file is not None:
         args += ["--secret", f"id=env,src={secret_env_file}"]
+    # The owner's ARG switches (domain.build_args): visible in the image, so
+    # checked there to be no secret's name.
+    for key, value in (build_args or {}).items():
+        args += ["--build-arg", f"{key}={value}"]
     for key, value in (labels or {}).items():
         args += ["--label", f"{key}={value}"]
     args.append(str(context))

@@ -30,6 +30,7 @@ from deploypro.config import get_settings
 from deploypro.engine import (
     backup,
     maintenance,
+    offsite,
     pipeline,
     previews,
     processes,
@@ -421,6 +422,14 @@ class Worker:
     async def _take_backup(self, run) -> None:
         try:
             await maintenance.run_backup(self._settings, run)
+        except offsite.CopyFailed as exc:
+            logger.warning("backup not copied off the server: %s", exc.message)
+            await self._alerts.event(
+                title="Backup not copied off the server",
+                detail=f"{exc.message} The backup on this server is fine.",
+                level="warning",
+            )
+            return
         except Exception as exc:  # noqa: BLE001 - recorded on the run, and alerted
             logger.exception("backup failed")
             await self._alerts.event(

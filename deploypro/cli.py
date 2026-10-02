@@ -284,10 +284,18 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
         )
         if value is not None
     }
+    if args.build_arg or args.unset_build_arg:
+        from deploypro.domain import build_args as rules
+
+        current = rules.parse(project.build_args)
+        for name in args.unset_build_arg:
+            current.pop(name, None)
+        current.update(rules.parse("\n".join(args.build_arg)))
+        changes["build_args"] = rules.to_text(current)
     if not changes:
         raise DeployProError(
             "Nothing to change — pass --stop-timeout, --memory, --cpus, "
-            "--keep-warm or --previews"
+            "--keep-warm, --previews, --build-arg or --unset-build-arg"
         )
     for key, low, high in (
         ("stop_timeout_seconds", 1, 86400),
@@ -303,6 +311,8 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
     print(f"  memory        {updated.memory_mb} MB, {updated.cpu_shares:g} CPU")
     print(f"  kept warm     {updated.keep_warm}")
     print(f"  previews      {'on' if updated.preview_deploys else 'off'}")
+    shown = updated.build_args.strip().replace("\n", ", ")
+    print(f"  build args    {shown or 'none'}")
     print("  applies to containers started from now on — deploy to apply it")
 
 
@@ -867,6 +877,20 @@ def _parser() -> argparse.ArgumentParser:
         "--previews",
         choices=["on", "off"],
         help="whether a push to another branch builds a preview",
+    )
+    project_set.add_argument(
+        "--build-arg",
+        action="append",
+        default=[],
+        metavar="NAME=value",
+        help="a Dockerfile ARG for the next builds, e.g. WITH_TEXT=1 (repeatable)",
+    )
+    project_set.add_argument(
+        "--unset-build-arg",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="remove a build argument (repeatable)",
     )
     project_set.set_defaults(handler=cmd_project_set)
     project_key = project.add_parser(

@@ -1278,3 +1278,10 @@ dl.facts-rows dt a:hover { color: var(--blue); }
   .np-repo-name, .np-repo-full { max-width: 16ch; }
   .np-repo-icon { display: none; }
 }
+
+/* System → Off-server copy: the public key, copied as one line. */
+.key-line {
+  margin: 8px 0 0; padding: 10px 12px; max-width: 100%;
+  background: var(--bg); border: 1px solid var(--hairline); border-radius: var(--radius);
+  font-size: 0.8125rem; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all;
+}

@@ -51,6 +51,7 @@ def to_project(row: dict[str, Any]) -> Project:
         github_installation_id=row["github_installation_id"],
         github_repo=row["github_repo"],
         preview_deploys=row["preview_deploys"],
+        build_args=row["build_args"],
     )
 
 

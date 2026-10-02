@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 from deploypro.adapters import crypto, notify
 from deploypro.config import Settings, get_settings
 from deploypro.deps import SettingsDep, token_matches
+from deploypro.domain import build_args as build_args_rules
 from deploypro.domain import naming, session
 from deploypro.domain.errors import DeployProError
 from deploypro.domain.models import (
@@ -261,6 +262,7 @@ async def save_build(
     keep_warm: Annotated[str, Form()] = "",
     stop_timeout_seconds: Annotated[str, Form()] = "",
     preview_deploys: Annotated[str, Form()] = "",
+    build_args: Annotated[str, Form()] = "",
 ):
     """Configuration → Build. Every field on the page, and only those.
 
@@ -276,6 +278,10 @@ async def save_build(
         parsed_cpu = _cpu(cpu_shares, project.cpu_shares)
     except ValueError as exc:
         return _redirect(back, err=str(exc))
+    try:
+        parsed_args = build_args_rules.parse(build_args)
+    except DeployProError as exc:
+        return _redirect(back, err=exc.message)
     changes: dict = {
         "root_directory": root_directory.strip(),
         "port": parsed_port,
@@ -288,6 +294,7 @@ async def save_build(
         # A checkbox: absent from the post means unticked. Safe here because
         # this handler serves only the Build form, which always carries it.
         "preview_deploys": preview_deploys == "1",
+        "build_args": build_args_rules.to_text(parsed_args),
     }
     # An empty override means "go back to detecting it", which is a real
     # setting and not a missing field — so these are written as NULL.
@@ -782,6 +789,78 @@ async def request_backup(request: Request, settings: SettingsDep):
     )
 
 
+@router.post("/system/offsite")
+async def save_offsite(
+    request: Request,
+    settings: SettingsDep,
+    user: Annotated[str, Form()],
+    host: Annotated[str, Form()] = "",
+    port: Annotated[str, Form()] = "23",
+    folder: Annotated[str, Form()] = "deploypro",
+):
+    """Where backups are copied off the server (engine.offsite)."""
+    signed_in(request)
+    from deploypro.engine import offsite
+
+    try:
+        target = await offsite.configure(
+            settings, user=user, host=host, port=port, folder=folder
+        )
+    except DeployProError as exc:
+        return _redirect("/system#offsite", err=exc.message)
+    if target.connected:
+        return _redirect("/system#offsite", ok=f"Saved. Backups go to {target.address}.")
+    return _redirect(
+        "/system#offsite",
+        ok="Saved. Now enter the Storage Box password once, to install DeployPro's key.",
+    )
+
+
+@router.post("/system/offsite/key")
+async def install_offsite_key(
+    request: Request, settings: SettingsDep, password: Annotated[str, Form()] = ""
+):
+    """The password is used for this request only: never stored or logged."""
+    signed_in(request)
+    from deploypro.engine import offsite
+
+    try:
+        target = await offsite.install_key(settings, password)
+    except DeployProError as exc:
+        return _redirect("/system#offsite", err=exc.message)
+    return _redirect(
+        "/system#offsite",
+        ok=f"Connected to {target.address}. Every backup is now copied there too.",
+    )
+
+
+@router.post("/system/offsite/test")
+async def test_offsite(request: Request, settings: SettingsDep):
+    signed_in(request)
+    from deploypro.engine import offsite
+
+    try:
+        target = await offsite.test(settings)
+    except DeployProError as exc:
+        return _redirect("/system#offsite", err=exc.message)
+    return _redirect(
+        "/system#offsite", ok=f"Connected to {target.address}, folder {target.folder}."
+    )
+
+
+@router.post("/system/offsite/remove")
+async def remove_offsite(request: Request):
+    """Forgets the target and its key. Copies already there stay."""
+    signed_in(request)
+    from deploypro.engine import offsite
+
+    await offsite.remove()
+    return _redirect(
+        "/system#offsite",
+        ok="Off-server copy turned off. Copies already there were left alone.",
+    )
+
+
 @router.post("/system/test-alert")
 async def send_test_alert(request: Request, settings: SettingsDep):
     signed_in(request)
@@ -870,11 +949,13 @@ def _redirect(path: str, *, ok: str = "", err: str = "") -> RedirectResponse:
     adding one so a sentence can survive a redirect would be a table, a
     cleanup job and a shared-state problem in exchange for a tidier URL.
     """
+    # The message goes before any #fragment, or the browser never sends it.
+    path, hash_, fragment = path.partition("#")
     if ok:
         path += ("&" if "?" in path else "?") + "ok=" + quote(ok)
     elif err:
         path += ("&" if "?" in path else "?") + "err=" + quote(err)
-    return RedirectResponse(path, status_code=303)
+    return RedirectResponse(path + hash_ + fragment, status_code=303)
 
 
 def _int(raw: str, fallback: int) -> int:

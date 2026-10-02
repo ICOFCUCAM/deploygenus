@@ -677,9 +677,10 @@ async def system_page(
     request: Request, settings: SettingsDep, ok: str = "", err: str = ""
 ):
     signed_in(request)
-    from deploypro.engine import disks, github
+    from deploypro.engine import disks, github, offsite
 
     now = datetime.now(UTC)
+    target = await offsite.get()
     app = await github_repo.get_app()
     installations = await github_repo.list_installations() if app else []
 
@@ -693,6 +694,7 @@ async def system_page(
         enabled=settings.backup_dir is not None,
         hour=settings.backup_hour,
         now=now,
+        offsite=target,
     )
     disk_facts = [
         views.disk_fact(
@@ -707,6 +709,7 @@ async def system_page(
         alerts_on=bool(settings.alert_webhook_url),
         backup_exists=bool(backup_state and backup_state.get("newest")),
         backup_dir=str(settings.backup_dir or ""),
+        offsite_connected=target is not None and target.connected,
     )
     return render(
         request,
@@ -727,6 +730,8 @@ async def system_page(
             "cleanup_fact": views.cleanup_fact(open_cleanup, last_cleanup, now),
             "cleanup_running": open_cleanup is not None,
             "backups": backup_view,
+            "offsite": target,
+            "offsite_fact": views.offsite_fact(target, now),
             "alerts_fact": views.alerts_fact(settings.alert_webhook_url),
             "alerts_on": bool(settings.alert_webhook_url),
             # Phase 3 Q-S2, extended to this page (proposal D2): it refreshes

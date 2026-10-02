@@ -21,7 +21,7 @@ from deploypro.domain.maintenance import (
     describe_cleanup,
     size,
 )
-from deploypro.engine import backup, housekeeping
+from deploypro.engine import backup, housekeeping, offsite
 from deploypro.repositories import maintenance as maintenance_repo
 
 logger = logging.getLogger("deploypro.maintenance")
@@ -82,6 +82,9 @@ async def run_backup(settings: Settings, run: MaintenanceRun) -> None:
         },
     )
     await publish_backups(settings)
+    # Off the server, when a target is set. Raises offsite.CopyFailed after
+    # recording it: the backup itself stands either way.
+    await offsite.copy(settings, result.path, keep=settings.backup_keep)
 
 
 async def publish_backups(settings: Settings) -> None:
