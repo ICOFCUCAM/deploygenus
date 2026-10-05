@@ -80,9 +80,6 @@ It installs Docker and generates the secrets. It checks that both DNS records
 point at this server and starts everything. Then it prints the dashboard
 address. Nothing is asked twice: running it again later is how you upgrade.
 
-> Until the DeployPro changes are merged into `main`, add
-> `DEPLOYPRO_BRANCH=claude/tender-archimedes-libref` to the command.
-
 ## 5. Right after it finishes
 
 1. **Save the master key.**
