@@ -183,6 +183,8 @@ async def import_repository(
     root_directory: Annotated[str, Form()] = "",
     slug: Annotated[str, Form()] = "",
     memory_mb: Annotated[str, Form()] = "512",
+    dockerfile_path: Annotated[str, Form()] = "",
+    kind: Annotated[str, Form()] = "",
 ):
     signed_in(request)
     back = "/projects/new/github?" + urlencode(
@@ -198,6 +200,8 @@ async def import_repository(
             branch=production_branch,
             root_directory=root_directory,
             memory_mb=_int(memory_mb, 512),
+            dockerfile_path=dockerfile_path,
+            background=kind == "background",
         )
     except DeployProError as exc:
         return _redirect(back, err=exc.message)

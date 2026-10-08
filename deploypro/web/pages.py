@@ -192,7 +192,9 @@ async def overview_page(
     )
     preview_view = (
         views.preview(picture, production, captured_number, now)
-        if previews.enabled(settings) and production is not None
+        if previews.enabled(settings)
+        and production is not None
+        and not project.is_background
         else None
     )
     return await _project_page(
@@ -204,7 +206,9 @@ async def overview_page(
             "preview": preview_view,
             "stats": views.deploy_stats(week, now),
             "volumes": await volume_repo.list_for_project(project.id),
-            "live_url": f"https://{primary_host}"
+            "live_url": ""
+            if project.is_background
+            else f"https://{primary_host}"
             if primary_host
             else (settings.deployment_url(production.short_id) if production else ""),
             "production": production,

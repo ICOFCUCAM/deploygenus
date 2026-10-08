@@ -31,7 +31,7 @@
 | 19 | Autoscaling | **No** — replicas are set by hand. Not needed at this size | not planned |
 | 20 | Monitoring | **Partly** — uptime checks, disk, backups and Discord/Slack alerts. No metrics history (CPU graphs, response times) | later, if needed |
 
-**Conclusion:** 13 of the 20 are done. What stands between Render and DeployPro for these four services is **Redis (14)**, **capacity on the server (12, partly)**, and two gaps the repositories themselves revealed: **G1 Dockerfile path** and **G2 background services** (§2a). Everything else on the list is either working or not needed to get the system running.
+**Conclusion:** 13 of the 20 are done. What stands between Render and DeployPro for these four services is **Redis (14)**, **capacity on the server (12, partly)**, and two gaps the repositories themselves revealed: **G1 Dockerfile path** and **G2 background services** (§2a) — both now built. Everything else on the list is either working or not needed to get the system running.
 
 **Deliberately not in this plan:** Kubernetes, Loki/Grafana, Prometheus, a container registry and autoscaling. Each solves a problem these apps don't have yet, and each would cost weeks. They return to the table only when a phase below actually needs them.
 
@@ -40,8 +40,8 @@
 | Render service | Runtime | DeployPro equivalent | Ready? |
 |---|---|---|---|
 | `dispatch-api` | Docker, web, Frankfurt | A **project** from its repository, with **Dockerfile path** `services/dispatch-api/Dockerfile` (G1) | **Yes, with G1** |
-| `dispatch-worker` | Docker, background, **own Dockerfile** | A **background service** project (G2, §2a) | **After G2** |
-| `cineforge-worker` | Docker, background, **own Dockerfile** | A **background service** project (G2, §2a) | **After G2** |
+| `dispatch-worker` | Docker, background, **own Dockerfile** | A **background service** project (G2, §2a) | **Ready** (G2 built) |
+| `cineforge-worker` | Docker, background, **own Dockerfile** | A **background service** project (G2, §2a) | **After Redis** (G2 built) |
 | `cineforge-redis` | Valkey 8 | **Built-in Redis** on the cineforge project (Phase 1) | **After Phase 1** |
 | Postgres (Supabase) | managed | **Stays on Supabase**; its URL goes into Environment as now | **Yes** |
 | GPU work (RunPod L4 pod) | GPU | **Stays on RunPod**; workers keep calling it with their API key | **Yes** |
@@ -59,9 +59,9 @@ Only CineForge uses Redis (`cineforge-redis`, read as `REDIS_URL`); Dispatch use
 
 Two gaps follow that Redis alone does not close:
 - **G1 · Dockerfile path.** DeployPro built `<root directory>/Dockerfile` from that folder. These repositories need a Dockerfile in a subfolder **built from the repository root** (Render's `dockerfilePath` + `dockerContext: .`). **Built 2026-10-08:** the project setting **Dockerfile path** (Build page, API, `deploypro project set --dockerfile`), migration `0011_dockerfile_path.sql`. Checked by building SOVEREIGN's `services/dispatch-api/Dockerfile` from its root: its `COPY packages/…` lines resolve.
-- **G2 · Background services.** Every DeployPro project has a web container that must answer HTTP. `dispatch-worker` and `cineforge-worker` have **no web part and their own Dockerfiles**, so they can be neither a project nor a worker of another project today. Needed: a project kind **Background service** — built and deployed as now, but with no address, no router, no HTTP health check (healthy = still running after a settle time), and rollback as usual. Its environment, volumes, build arguments and Redis work as for any project. Estimate: about a day.
+- **G2 · Background services.** Every DeployPro project has a web container that must answer HTTP. `dispatch-worker` and `cineforge-worker` have **no web part and their own Dockerfiles**, so they can be neither a project nor a worker of another project today. Needed: a project kind **Background service** — built and deployed as now, but with no address, no router, no HTTP health check (healthy = still running after a settle time), and rollback as usual. Its environment, volumes, build arguments and Redis work as for any project. **Built 2026-10-08:** the switch **Background service (no website)** on the Build page and when importing or creating a project; migration `0012_project_kind.sql`. Such a project starts from the image's own `CMD` with no router labels and no port; it passes if it is still running **and has not restarted** 15 s after starting (the restart policy brings a crashing container straight back, so "running" alone misses a crash loop — found with real Docker), otherwise the deploy fails with the container's last 100 lines. Pushes to other branches are ignored (no previews), no domains can be added, nothing is kept warm (two copies would both consume the queue), and the monitor alerts when its container is not running. Promoting a new deployment overlaps old and new for the settle time, which queue consumers (BullMQ, Postgres queues) tolerate.
 
-**Revised order:** G1 (done) → **G2** → **Dispatch moves** (it needs no Redis) → **Redis (Phase 1)** → **CineForge moves**.
+**Revised order:** G1 (done) → G2 (done) → **Dispatch moves** (it needs no Redis) → **Redis (Phase 1)** → **CineForge moves**.
 
 ## 3. Phase 1 — Built-in Redis
 
@@ -105,7 +105,7 @@ Configuration gets a **Redis** page (beside Storage):
 
 | Layer | Change |
 |---|---|
-| `db/migrations/0011_redis.sql` | Table `project_redis`: `project_id` (PK, FK), `memory_mb` (default 256), `policy` (`noeviction` default; `allkeys-lru`, `volatile-lru`), `env_names` (text, default `REDIS_URL`), `password_encrypted` (bytea), `image`, `created_at`, `updated_at` |
+| `db/migrations/0013_redis.sql` | Table `project_redis`: `project_id` (PK, FK), `memory_mb` (default 256), `policy` (`noeviction` default; `allkeys-lru`, `volatile-lru`), `env_names` (text, default `REDIS_URL`), `password_encrypted` (bytea), `image`, `created_at`, `updated_at` |
 | `domain/redis.py` | Policy names, memory bounds (64–4096 MB), env-name validation, the URL format, the `valkey-server` arguments as pure functions |
 | `repositories/redis.py` | get / enable / update / disable |
 | `adapters/containers.py` | `run_service()` for a long-running, unrouted container, plus `exec_capture()` for `valkey-cli` |
@@ -194,7 +194,7 @@ The owner's decision is to upgrade the server as needed. In order:
 | 1. Free capacity on the current server (§5.1) | owner, 15 min | Stable BalanceVid TV now |
 | 2. Confirm R1–R5 (§3.8) | owner — **done** | Phase 1 build |
 | 3. G1 Dockerfile path (§2a) | Claude — **done** | All three services build |
-| 4. G2 Background services (§2a) | Claude, ~1 day | Both workers |
+| 4. G2 Background services (§2a) | Claude — **done** | Both workers |
 | 5. Rescale or add a server (§5.2–5.3) | owner | Room for the migrated services |
 | 6. Migrate Dispatch (§4) | together | First service off Render |
 | 7. Build built-in Redis (§3) | Claude, ~2 days | CineForge's queue |

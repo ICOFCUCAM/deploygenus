@@ -83,6 +83,10 @@
       </div>
     </div>
     <div class="field">
+      <label class="check"><input type="checkbox" name="kind" value="background" aria-describedby="kind_hint"{% if project.is_background %} checked{% endif %}> Background service (no website)</label>
+      <p class="hint" id="kind_hint">A worker or queue consumer: no web address, no domains, no previews, and nothing kept warm. It counts as running if it is still up 15 seconds after it starts. Applies to the next deploy.</p>
+    </div>
+    <div class="field">
       <label class="check"><input type="checkbox" name="preview_deploys" value="1" aria-describedby="preview_hint"{% if project.preview_deploys %} checked{% endif %}> Deploy previews</label>
       <p class="hint" id="preview_hint">A push to another branch builds a preview with its own address. Off: only pushes to <span class="mono">{{ project.production_branch }}</span> deploy. Takes effect on the next push.</p>
     </div>

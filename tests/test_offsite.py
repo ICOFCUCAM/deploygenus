@@ -32,7 +32,7 @@ HOST_KEY = "[u1.your-storagebox.de]:23 ssh-ed25519 AAAAhost\n"
 class FakeBox:
     """A remote file tree behind sftp's batch commands."""
 
-    def __init__(self, password="pw"):
+    def __init__(self, password="box!secret!"):
         self.files: dict[str, str] = {}
         self.dirs: set[str] = set()
         self.password = password
@@ -136,7 +136,7 @@ def box(monkeypatch, repos):
     return fake
 
 
-async def set_up(box, password="pw"):
+async def set_up(box, password="box!secret!"):
     await offsite.configure(SETTINGS, user="u1", host="", port="23", folder="deploypro")
     return await offsite.install_key(SETTINGS, password)
 
@@ -197,7 +197,9 @@ class TestSettingUp:
         lines = box.files[".ssh/authorized_keys"].splitlines()
         # The owner's line stays; DeployPro's older key is replaced.
         assert lines == ["ssh-ed25519 AAAAmine me@laptop", target.public_key]
-        assert "pw" not in str(repos["system"])
+        # "!" never occurs in the stored state's base64 and JSON, so this
+        # can't pass or fail by a random key happening to contain the text.
+        assert "box!secret!" not in str(repos["system"])
         # And the key, not the password, is what logs in from now on.
         assert box.logins[-1] == "key"
 

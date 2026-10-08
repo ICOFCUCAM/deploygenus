@@ -53,6 +53,7 @@ def to_project(row: dict[str, Any]) -> Project:
         preview_deploys=row["preview_deploys"],
         build_args=row["build_args"],
         dockerfile_path=row["dockerfile_path"],
+        kind=row["kind"],
     )
 
 

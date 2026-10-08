@@ -65,6 +65,13 @@ async def run_deployment(deployment: Deployment, *, settings: Settings) -> Deplo
             f"({deployment.trigger.value})"
         )
 
+        if project.is_background and not is_production:
+            # A preview of a queue consumer would consume the queue.
+            raise Conflict(
+                f"{project.name} is a background service, so only "
+                f"{project.production_branch} deploys; there are no previews."
+            )
+
         full = await housekeeping.ensure_room(settings)
         if full:
             raise Conflict(full)
@@ -108,8 +115,10 @@ async def run_deployment(deployment: Deployment, *, settings: Settings) -> Deplo
             deployment.id, container_id=container_id
         )
 
-        url = settings.deployment_url(deployment.short_id)
-        await log.system(f"ready at {url}")
+        if project.is_background:
+            await log.system("running (background service, no address)")
+        else:
+            await log.system(f"ready at {settings.deployment_url(deployment.short_id)}")
 
         if is_production:
             await promote.promote(
