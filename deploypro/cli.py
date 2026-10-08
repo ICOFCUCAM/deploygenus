@@ -284,6 +284,10 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
         )
         if value is not None
     }
+    if args.dockerfile is not None:
+        from deploypro.domain.detect import normalise_dockerfile_path
+
+        changes["dockerfile_path"] = normalise_dockerfile_path(args.dockerfile)
     if args.build_arg or args.unset_build_arg:
         from deploypro.domain import build_args as rules
 
@@ -295,7 +299,7 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
     if not changes:
         raise DeployProError(
             "Nothing to change — pass --stop-timeout, --memory, --cpus, "
-            "--keep-warm, --previews, --build-arg or --unset-build-arg"
+            "--keep-warm, --previews, --dockerfile, --build-arg or --unset-build-arg"
         )
     for key, low, high in (
         ("stop_timeout_seconds", 1, 86400),
@@ -313,6 +317,7 @@ async def cmd_project_set(args: argparse.Namespace, settings: Settings) -> None:
     print(f"  previews      {'on' if updated.preview_deploys else 'off'}")
     shown = updated.build_args.strip().replace("\n", ", ")
     print(f"  build args    {shown or 'none'}")
+    print(f"  dockerfile    {updated.dockerfile_path or 'detected'}")
     print("  applies to containers started from now on — deploy to apply it")
 
 
@@ -877,6 +882,12 @@ def _parser() -> argparse.ArgumentParser:
         "--previews",
         choices=["on", "off"],
         help="whether a push to another branch builds a preview",
+    )
+    project_set.add_argument(
+        "--dockerfile",
+        metavar="PATH",
+        help="Dockerfile relative to the repository root, e.g. services/api/Dockerfile "
+        "('' to go back to detection)",
     )
     project_set.add_argument(
         "--build-arg",

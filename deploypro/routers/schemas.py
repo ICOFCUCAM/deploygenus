@@ -57,6 +57,8 @@ class UpdateProject(BaseModel):
     cpu_shares: float | None = Field(default=None, gt=0, le=64)
     keep_warm: int | None = Field(default=None, ge=0, le=50)
     stop_timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
+    #: Relative to the repository root; "" clears it. See projects.dockerfile_path.
+    dockerfile_path: str | None = None
 
     def changes(self) -> dict[str, Any]:
         return self.model_dump(exclude_unset=True, exclude_none=True)
@@ -95,6 +97,7 @@ class ProjectOut(BaseModel):
     repo_url: str
     production_branch: str
     root_directory: str
+    dockerfile_path: str
     framework: str | None
     port: int | None
     memory_mb: int
@@ -114,6 +117,7 @@ class ProjectOut(BaseModel):
             repo_url=project.repo_url,
             production_branch=project.production_branch,
             root_directory=project.root_directory,
+            dockerfile_path=project.dockerfile_path,
             framework=project.framework,
             port=project.port,
             memory_mb=project.memory_mb,

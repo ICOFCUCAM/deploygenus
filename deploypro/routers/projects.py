@@ -7,6 +7,7 @@ from fastapi import APIRouter, Response, status
 from deploypro.adapters import crypto
 from deploypro.deps import Authenticated, ProjectDep, SettingsDep
 from deploypro.domain import naming
+from deploypro.domain.detect import normalise_dockerfile_path
 from deploypro.domain.errors import InvalidRequest, NotFound
 from deploypro.domain.models import EnvTarget
 from deploypro.domain.repo_url import validate_repo_url
@@ -66,6 +67,8 @@ async def update_project(project: ProjectDep, body: UpdateProject) -> ProjectOut
     changes = body.changes()
     if "repo_url" in changes:
         validate_repo_url(changes["repo_url"])
+    if "dockerfile_path" in changes:
+        changes["dockerfile_path"] = normalise_dockerfile_path(changes["dockerfile_path"])
     return ProjectOut.of(await project_repo.update(project.id, changes))
 
 

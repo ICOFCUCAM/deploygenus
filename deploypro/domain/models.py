@@ -128,6 +128,10 @@ class Project:
     #: `NAME=value` lines passed to `docker build --build-arg`: plain switches
     #: for a Dockerfile's ARG lines, never secrets (domain.build_args).
     build_args: str = ""
+    #: A Dockerfile to build with, relative to the repository root; the build
+    #: context stays the root directory. Empty: `<root directory>/Dockerfile`
+    #: or detection, as before.
+    dockerfile_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)

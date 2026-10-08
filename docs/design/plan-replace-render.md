@@ -31,7 +31,7 @@
 | 19 | Autoscaling | **No** — replicas are set by hand. Not needed at this size | not planned |
 | 20 | Monitoring | **Partly** — uptime checks, disk, backups and Discord/Slack alerts. No metrics history (CPU graphs, response times) | later, if needed |
 
-**Conclusion:** 13 of the 20 are done. What stands between Render and DeployPro for these four services is **Redis (14)** and **capacity on the server (12, partly)**. Everything else on the list is either working or not needed to get the system running.
+**Conclusion:** 13 of the 20 are done. What stands between Render and DeployPro for these four services is **Redis (14)**, **capacity on the server (12, partly)**, and two gaps the repositories themselves revealed: **G1 Dockerfile path** and **G2 background services** (§2a). Everything else on the list is either working or not needed to get the system running.
 
 **Deliberately not in this plan:** Kubernetes, Loki/Grafana, Prometheus, a container registry and autoscaling. Each solves a problem these apps don't have yet, and each would cost weeks. They return to the table only when a phase below actually needs them.
 
@@ -39,14 +39,29 @@
 
 | Render service | Runtime | DeployPro equivalent | Ready? |
 |---|---|---|---|
-| `dispatch-api` | Docker, web, Frankfurt | A **project** from its repository; its Dockerfile is used as it is | **Yes, today** |
-| `dispatch-worker` | Docker, background | A **worker** on the dispatch project (same image, its own command) | **Yes, today** |
-| `cineforge-worker` | Docker, background | A **worker** on a cineforge project | **Yes, today** |
+| `dispatch-api` | Docker, web, Frankfurt | A **project** from its repository, with **Dockerfile path** `services/dispatch-api/Dockerfile` (G1) | **Yes, with G1** |
+| `dispatch-worker` | Docker, background, **own Dockerfile** | A **background service** project (G2, §2a) | **After G2** |
+| `cineforge-worker` | Docker, background, **own Dockerfile** | A **background service** project (G2, §2a) | **After G2** |
 | `cineforge-redis` | Valkey 8 | **Built-in Redis** on the cineforge project (Phase 1) | **After Phase 1** |
 | Postgres (Supabase) | managed | **Stays on Supabase**; its URL goes into Environment as now | **Yes** |
 | GPU work (RunPod L4 pod) | GPU | **Stays on RunPod**; workers keep calling it with their API key | **Yes** |
 
-Dispatch and CineForge share one Redis on Render (`cineforge-redis`). On DeployPro the Redis belongs to a project, so the other project needs its address: §3.7.
+Only CineForge uses Redis (`cineforge-redis`, read as `REDIS_URL`); Dispatch uses none (§2a).
+
+## 2a. What the two repositories showed (read 2026-10-08)
+
+| | Dispatch — `ICOFCUCAM/SOVEREIGN` | CineForge — `ICOFCUCAM/media` |
+|---|---|---|
+| Render setup | `render.yaml`: `dispatch-api` (web, health `/v1/health`, port 8787) and `dispatch-worker` (background) | `render.yaml`: `cineforge-worker` (background) and `cineforge-redis` (Key Value, `noeviction`, internal only). The web app is on Vercel |
+| Dockerfiles | `services/dispatch-api/Dockerfile`, `services/dispatch-worker/Dockerfile` (its own image, with Chromium for PDFs), both built **from the repository root** | `apps/worker/Dockerfile`, built **from the repository root** |
+| Redis | **none** — Postgres (Supabase) and S3 (Supabase Storage) only | **`REDIS_URL`**, used by BullMQ (`packages/gpu`, `packages/realtime`) |
+| GPU | — | RunPod, fal.ai and others through their API keys (unchanged) |
+
+Two gaps follow that Redis alone does not close:
+- **G1 · Dockerfile path.** DeployPro built `<root directory>/Dockerfile` from that folder. These repositories need a Dockerfile in a subfolder **built from the repository root** (Render's `dockerfilePath` + `dockerContext: .`). **Built 2026-10-08:** the project setting **Dockerfile path** (Build page, API, `deploypro project set --dockerfile`), migration `0011_dockerfile_path.sql`. Checked by building SOVEREIGN's `services/dispatch-api/Dockerfile` from its root: its `COPY packages/…` lines resolve.
+- **G2 · Background services.** Every DeployPro project has a web container that must answer HTTP. `dispatch-worker` and `cineforge-worker` have **no web part and their own Dockerfiles**, so they can be neither a project nor a worker of another project today. Needed: a project kind **Background service** — built and deployed as now, but with no address, no router, no HTTP health check (healthy = still running after a settle time), and rollback as usual. Its environment, volumes, build arguments and Redis work as for any project. Estimate: about a day.
+
+**Revised order:** G1 (done) → **G2** → **Dispatch moves** (it needs no Redis) → **Redis (Phase 1)** → **CineForge moves**.
 
 ## 3. Phase 1 — Built-in Redis
 
@@ -146,7 +161,7 @@ Runbook, per application:
 7. **Domain:** add the API's real domain under Domains. If it is on Cloudflare, its DNS record is made automatically.
 8. **Then delete the Render services,** so nothing keeps billing or running twice.
 
-**What we need from the owner to start:** the GitHub repository names for dispatch and cineforge, and whether those apps read `REDIS_URL` or another name.
+**Settled 2026-10-08:** Dispatch is `ICOFCUCAM/SOVEREIGN` (no Redis); CineForge is `ICOFCUCAM/media` (`REDIS_URL`, BullMQ). Decisions R1–R5 confirmed by the owner. Render services stay until the DeployPro versions have run the real workloads.
 
 ## 5. Phase 3 — Capacity: the server, before anything else moves
 
@@ -177,9 +192,12 @@ The owner's decision is to upgrade the server as needed. In order:
 | Step | Who | Unblocks |
 |---|---|---|
 | 1. Free capacity on the current server (§5.1) | owner, 15 min | Stable BalanceVid TV now |
-| 2. Confirm R1–R5 (§3.8) | owner | Phase 1 build |
-| 3. Build built-in Redis (§3) | Claude, ~2 days | CineForge/Dispatch Redis |
-| 4. Rescale or add a server (§5.2–5.3) | owner | Room for the migrated services |
-| 5. Migrate Dispatch and CineForge (§4) | together | Render no longer needed |
-| 6. Delete the Render services | owner | No double running, no Render bill |
-| 7. Phases 4–5 | later | Multi-server, GPU orchestration |
+| 2. Confirm R1–R5 (§3.8) | owner — **done** | Phase 1 build |
+| 3. G1 Dockerfile path (§2a) | Claude — **done** | All three services build |
+| 4. G2 Background services (§2a) | Claude, ~1 day | Both workers |
+| 5. Rescale or add a server (§5.2–5.3) | owner | Room for the migrated services |
+| 6. Migrate Dispatch (§4) | together | First service off Render |
+| 7. Build built-in Redis (§3) | Claude, ~2 days | CineForge's queue |
+| 8. Migrate CineForge (§4) | together | Render no longer needed |
+| 9. Delete the Render services, after the real workloads ran | owner | No double running, no Render bill |
+| 10. Phases 4–5 | later | Multi-server, GPU orchestration |
