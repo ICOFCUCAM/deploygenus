@@ -20,7 +20,7 @@ from deploypro.adapters import containers, source
 from deploypro.config import Settings
 from deploypro.domain import build_args as build_args_rules
 from deploypro.domain import naming
-from deploypro.domain.detect import Overrides, detect
+from deploypro.domain.detect import Overrides, detect, explicit_dockerfile
 from deploypro.domain.errors import Conflict, DeployProError
 from deploypro.domain.models import Deployment, EnvTarget, LogStream, Project
 from deploypro.domain.repo_url import redact
@@ -65,6 +65,13 @@ async def run_deployment(deployment: Deployment, *, settings: Settings) -> Deplo
             f"({deployment.trigger.value})"
         )
 
+        if project.is_background and not is_production:
+            # A preview of a queue consumer would consume the queue.
+            raise Conflict(
+                f"{project.name} is a background service, so only "
+                f"{project.production_branch} deploys; there are no previews."
+            )
+
         full = await housekeeping.ensure_room(settings)
         if full:
             raise Conflict(full)
@@ -74,7 +81,7 @@ async def run_deployment(deployment: Deployment, *, settings: Settings) -> Deplo
         )
         await deployment_repo.heartbeat(deployment.id)
 
-        plan = await _plan(project, app_dir, log=log)
+        plan = await _plan(project, app_dir, repo_dir=workdir / "repo", log=log)
         await deployment_repo.heartbeat(deployment.id)
 
         image_tag = naming.image_tag(project.slug, deployment.git_sha)
@@ -108,8 +115,10 @@ async def run_deployment(deployment: Deployment, *, settings: Settings) -> Deplo
             deployment.id, container_id=container_id
         )
 
-        url = settings.deployment_url(deployment.short_id)
-        await log.system(f"ready at {url}")
+        if project.is_background:
+            await log.system("running (background service, no address)")
+        else:
+            await log.system(f"ready at {settings.deployment_url(deployment.short_id)}")
 
         if is_production:
             await promote.promote(
@@ -181,7 +190,13 @@ async def _checkout(
     return app_dir
 
 
-async def _plan(project: Project, app_dir: Path, *, log: LogWriter):
+async def _plan(project: Project, app_dir: Path, *, repo_dir: Path, log: LogWriter):
+    if project.dockerfile_path:
+        plan = explicit_dockerfile(repo_dir, project.dockerfile_path, port=project.port)
+        await log.system(plan.reason)
+        for note in plan.notes:
+            await log.system(f"note: {note}")
+        return plan
     plan = detect(
         app_dir,
         Overrides(

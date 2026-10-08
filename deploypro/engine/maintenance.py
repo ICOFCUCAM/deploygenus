@@ -34,9 +34,10 @@ async def run_cleanup(settings: Settings, run: MaintenanceRun) -> dict[str, obje
     """Clear old images, build cache, build folders and logs; record it."""
     try:
         report = await housekeeping.run(settings)
-        cache = await containers.build_cache_bytes()
+        cache = await containers.build_cache_usage()
         if cache is not None:
-            await maintenance_repo.set_state("build_cache", {"bytes": cache})
+            total, own = cache
+            await maintenance_repo.set_state("build_cache", {"bytes": total, "own": own})
         await maintenance_repo.delete_old()
     except Exception as exc:
         await maintenance_repo.fail(run.id, error=f"{type(exc).__name__}: {exc}")

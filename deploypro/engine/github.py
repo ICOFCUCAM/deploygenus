@@ -281,8 +281,13 @@ async def import_repository(
     branch: str = "",
     root_directory: str = "",
     memory_mb: int = 512,
+    dockerfile_path: str = "",
+    background: bool = False,
 ) -> Project:
     """Make a project from a repository the app can read, linked to it."""
+    from deploypro.domain.detect import normalise_dockerfile_path
+
+    dockerfile_path = normalise_dockerfile_path(dockerfile_path)
     repo = await find_repository(settings, installation_id, full_name)
     project = await project_repo.create(
         slug=slug.strip() or naming.slugify(name or repo.name),
@@ -292,6 +297,14 @@ async def import_repository(
         root_directory=root_directory.strip(),
         memory_mb=memory_mb,
     )
+    if dockerfile_path or background:
+        project = await project_repo.update(
+            project.id,
+            {
+                "dockerfile_path": dockerfile_path,
+                "kind": "background" if background else "web",
+            },
+        )
     return await github_repo.link_project(project.id, installation_id, repo.full_name)
 
 

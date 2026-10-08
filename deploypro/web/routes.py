@@ -25,6 +25,7 @@ from deploypro.config import Settings, get_settings
 from deploypro.deps import SettingsDep, token_matches
 from deploypro.domain import build_args as build_args_rules
 from deploypro.domain import naming, session
+from deploypro.domain.detect import normalise_dockerfile_path
 from deploypro.domain.errors import DeployProError
 from deploypro.domain.models import (
     Deployment,
@@ -195,10 +196,13 @@ async def create_project(
     root_directory: Annotated[str, Form()] = "",
     slug: Annotated[str, Form()] = "",
     memory_mb: Annotated[str, Form()] = "512",
+    dockerfile_path: Annotated[str, Form()] = "",
+    kind: Annotated[str, Form()] = "",
 ):
     signed_in(request)
     try:
         validate_repo_url(repo_url)
+        parsed_dockerfile = normalise_dockerfile_path(dockerfile_path)
         project = await project_repo.create(
             slug=slug.strip() or naming.slugify(name),
             name=name.strip(),
@@ -207,6 +211,14 @@ async def create_project(
             root_directory=root_directory.strip(),
             memory_mb=_int(memory_mb, 512),
         )
+        if parsed_dockerfile or kind == "background":
+            project = await project_repo.update(
+                project.id,
+                {
+                    "dockerfile_path": parsed_dockerfile,
+                    "kind": "background" if kind == "background" else "web",
+                },
+            )
     except DeployProError as exc:
         return _redirect("/projects/new", err=exc.message)
     from deploypro.engine import github
@@ -263,6 +275,8 @@ async def save_build(
     stop_timeout_seconds: Annotated[str, Form()] = "",
     preview_deploys: Annotated[str, Form()] = "",
     build_args: Annotated[str, Form()] = "",
+    dockerfile_path: Annotated[str, Form()] = "",
+    kind: Annotated[str, Form()] = "",
 ):
     """Configuration → Build. Every field on the page, and only those.
 
@@ -280,6 +294,7 @@ async def save_build(
         return _redirect(back, err=str(exc))
     try:
         parsed_args = build_args_rules.parse(build_args)
+        parsed_dockerfile = normalise_dockerfile_path(dockerfile_path)
     except DeployProError as exc:
         return _redirect(back, err=exc.message)
     changes: dict = {
@@ -295,6 +310,9 @@ async def save_build(
         # this handler serves only the Build form, which always carries it.
         "preview_deploys": preview_deploys == "1",
         "build_args": build_args_rules.to_text(parsed_args),
+        "dockerfile_path": parsed_dockerfile,
+        # A checkbox, like previews: absent means a website.
+        "kind": "background" if kind == "background" else "web",
     }
     # An empty override means "go back to detecting it", which is a real
     # setting and not a missing field — so these are written as NULL.
@@ -407,6 +425,11 @@ async def add_domain(
 ):
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
+    if project.is_background:
+        return _redirect(
+            f"/projects/{slug}/config/domains",
+            err="A background service has no website, so it has no domains.",
+        )
     cleaned = host.strip().lower().rstrip(".")
     if "." not in cleaned or "/" in cleaned:
         return _redirect(

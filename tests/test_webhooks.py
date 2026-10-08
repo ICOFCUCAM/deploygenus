@@ -71,6 +71,7 @@ class TestPushFiltering:
             slug = "blog"
             production_branch = "main"
             preview_deploys = True
+            is_background = False
 
         return P()
 
@@ -140,7 +141,10 @@ class TestPreviewsOff:
 
     def project(self, previews):
         return SimpleNamespace(
-            slug="vid", production_branch="main", preview_deploys=previews
+            slug="vid",
+            production_branch="main",
+            preview_deploys=previews,
+            is_background=False,
         )
 
     def push(self, branch):

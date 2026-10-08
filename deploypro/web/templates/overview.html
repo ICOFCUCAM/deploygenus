@@ -93,6 +93,7 @@
       {% endif %}
   </div>
 
+  {% if project.is_background %}<p class="muted small">Background service · no web address. Its output is in the deployment’s logs.</p>{% endif %}
   <div class="production-actions">
     {% if block.state == 'serving' and live_url %}
     {# Amendment §2: on a healthy project, looking is the common action. #}

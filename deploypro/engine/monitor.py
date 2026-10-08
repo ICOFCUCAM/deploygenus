@@ -59,6 +59,8 @@ class Monitor:
         problem = (
             "it has no container"
             if not deployment.container_id
+            else await self._service_problem(deployment.container_id)
+            if project.is_background
             else await health.probe(
                 container_id=deployment.container_id,
                 network=self.settings.network,
@@ -79,6 +81,11 @@ class Monitor:
             up_title=f"{project.name} is serving again",
             project=project.slug,
         )
+
+    async def _service_problem(self, container_id: str) -> str | None:
+        """A background service has no port: running is the whole check."""
+        status = await containers.state(container_id)
+        return None if status == "running" else f"its container is {status or 'gone'}"
 
     async def _check_workers(self, project) -> int:
         down = 0

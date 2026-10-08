@@ -588,8 +588,14 @@ async def prune_build_cache(
     return " | ".join(report for report in reports if report)
 
 
-async def build_cache_bytes() -> int | None:
-    """What BuildKit's cache takes on disk now, or None if Docker won't say."""
+async def build_cache_usage() -> tuple[int, int | None] | None:
+    """(all of BuildKit's cache, the part only the cache holds), or None.
+
+    The two differ, and the difference is what the size cap cannot touch:
+    cache whose layers are also the layers of an image that exists. A real
+    host showed 12.4 GB against an 8 GB cap with nothing to prune, because
+    7.7 GB was the cache's own and the rest was the running apps' images.
+    """
     try:
         out = await _capture(["system", "df", "--format", "{{json .}}"], timeout=120)
     except DockerError:
@@ -600,7 +606,10 @@ async def build_cache_bytes() -> int | None:
         except ValueError:
             continue
         if row.get("Type") == "Build Cache":
-            return parse_size(str(row.get("Size", "")))
+            total = parse_size(str(row.get("Size", "")))
+            if total is None:
+                return None
+            return total, parse_size(str(row.get("Reclaimable", "")))
     return None
 
 

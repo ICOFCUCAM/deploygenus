@@ -42,7 +42,8 @@ async def promote(
     deployment = await deployment_repo.ensure_promotable(deployment.id, project.id)
     await ensure_serving(project, deployment, settings=settings, log=log, workdir=workdir)
 
-    await log.system(await routing.publish(project, deployment, settings=settings))
+    if not project.is_background:
+        await log.system(await routing.publish(project, deployment, settings=settings))
     await project_repo.set_production(project.id, deployment.id)
     await log.system(f"deployment #{deployment.number} is now serving production")
 
@@ -64,7 +65,8 @@ async def promote(
     await reclaim(project, protect={deployment.id}, log=log)
     # What production now looks like, for the Overview. Requested only; the
     # worker takes the picture later, and a failure never reaches here.
-    await previews.request(settings, project, deployment)
+    if not project.is_background:
+        await previews.request(settings, project, deployment)
     return deployment
 
 
@@ -103,9 +105,10 @@ async def reclaim(
     if project.production_deployment_id:
         protected.add(project.production_deployment_id)
 
-    stale = await deployment_repo.reclaimable(
-        project.id, keep=project.keep_warm, protect=protected
-    )
+    # A background service keeps nothing warm: a superseded queue consumer
+    # still running is a second consumer on old code, not a spare.
+    keep = 0 if project.is_background else project.keep_warm
+    stale = await deployment_repo.reclaimable(project.id, keep=keep, protect=protected)
     for deployment in stale:
         if not deployment.container_id:
             continue

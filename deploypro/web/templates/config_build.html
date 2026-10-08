@@ -27,6 +27,11 @@
       </div>
     </div>
     <div class="field">
+      <label for="dockerfile_path">Dockerfile path <span class="muted">(optional)</span></label>
+      <input class="mono-input" type="text" id="dockerfile_path" name="dockerfile_path" value="{{ project.dockerfile_path }}" placeholder="services/api/Dockerfile" aria-describedby="dockerfile_hint">
+      <p class="hint" id="dockerfile_hint">For a repository with one Dockerfile per service. Relative to the repository root; the build still runs from the root directory, so <span class="mono">COPY</span> can reach shared folders.</p>
+    </div>
+    <div class="field">
       <label for="install_command">Install command</label>
       <input class="mono-input" type="text" id="install_command" name="install_command" value="{{ project.install_command or '' }}" placeholder="detected">
     </div>
@@ -76,6 +81,10 @@
         <input type="text" inputmode="numeric" id="stop_timeout_seconds" name="stop_timeout_seconds" value="{{ project.stop_timeout_seconds }}" aria-describedby="stop_hint">
         <p class="hint" id="stop_hint">How long a replaced container gets to finish its work. Applies to the next replacement.</p>
       </div>
+    </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" name="kind" value="background" aria-describedby="kind_hint"{% if project.is_background %} checked{% endif %}> Background service (no website)</label>
+      <p class="hint" id="kind_hint">A worker or queue consumer: no web address, no domains, no previews, and nothing kept warm. It counts as running if it is still up 15 seconds after it starts. Applies to the next deploy.</p>
     </div>
     <div class="field">
       <label class="check"><input type="checkbox" name="preview_deploys" value="1" aria-describedby="preview_hint"{% if project.preview_deploys %} checked{% endif %}> Deploy previews</label>

@@ -8,6 +8,7 @@ with "a container for this image, on the network, answering HTTP".
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from deploypro.adapters import containers
@@ -83,6 +84,18 @@ async def launch(
             "anything it writes is discarded with its container"
         )
 
+    if project.is_background:
+        return await _launch_background(
+            project,
+            deployment,
+            name=name,
+            env=env,
+            env_file=env_file,
+            mounts=mounts,
+            settings=settings,
+            log=log,
+        )
+
     spec = containers.RunSpec(
         image=deployment.image_tag,
         name=name,
@@ -142,6 +155,96 @@ async def launch(
     )
     await deployment_repo.set_container(deployment.id, container_id)
     return container_id
+
+
+#: How long a background service must keep running to count as started. It has
+#: no port to answer on, so "still running after it settled" is the check: long
+#: enough for a missing variable or a bad import to crash it, short enough that
+#: a deploy does not stall on it.
+BACKGROUND_SETTLE_SECONDS = 15
+
+
+async def _settles(container_id: str) -> bool:
+    """Still up, and never restarted, after the settle time.
+
+    The container runs under `--restart unless-stopped`, so one that crashes
+    on start is brought back at once and reads as running most of the time:
+    the restart count is what gives a crash loop away.
+    """
+    for _ in range(BACKGROUND_SETTLE_SECONDS):
+        await _sleep(1)
+        if not await containers.is_running(container_id):
+            return False
+        if await containers.restart_count(container_id) > 0:
+            return False
+    return True
+
+
+async def _launch_background(
+    project: Project,
+    deployment: Deployment,
+    *,
+    name: str,
+    env,
+    env_file: Path,
+    mounts,
+    settings: Settings,
+    log: LogWriter,
+) -> str:
+    """A container with no address: no router labels, no port, no domains.
+
+    The same image, environment and volumes as a website, started from the
+    image's own CMD. docs/design/plan-replace-render.md, G2.
+    """
+    await log.system(
+        "background service — no web address; healthy if still running after "
+        f"{BACKGROUND_SETTLE_SECONDS}s"
+    )
+    container_id = await containers.run_worker(
+        containers.TaskSpec(
+            image=deployment.image_tag,
+            name=name,
+            network=settings.network,
+            command=None,
+            memory_mb=project.memory_mb,
+            env_file=env_file,
+            inline_env=env.inline,
+            volumes=mounts,
+            stop_timeout=project.stop_timeout_seconds,
+            labels={
+                containers.OWNER_LABEL: containers.OWNER_VALUE,
+                containers.PROJECT_LABEL: project.slug,
+                containers.DEPLOYMENT_LABEL: deployment.short_id,
+                containers.ROLE_LABEL: "service",
+            },
+        )
+    )
+    if not await _settles(container_id):
+        tail = await containers.logs(container_id, tail=100)
+        await log.system(
+            "the service stopped or restarted within "
+            f"{BACKGROUND_SETTLE_SECONDS}s of starting"
+        )
+        await log.system("--- last 100 lines from the container ---")
+        lines = tail.splitlines()
+        for line in lines:
+            await log.write(line, stream=LogStream.RUN)
+        if not lines:
+            await log.system("(the container produced no output at all)")
+        await containers.remove(container_id, force=True)
+        await log.flush()
+        raise DeployFailed(
+            f"The service exited within {BACKGROUND_SETTLE_SECONDS}s of starting "
+            "(or kept restarting)."
+        )
+    await log.system(f"running after {BACKGROUND_SETTLE_SECONDS}s")
+    await deployment_repo.set_container(deployment.id, container_id)
+    return container_id
+
+
+async def _sleep(seconds: float) -> None:
+    """Separate so tests do not wait the settle time out."""
+    await asyncio.sleep(seconds)
 
 
 async def ensure_serving(

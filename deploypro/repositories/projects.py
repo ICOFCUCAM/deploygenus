@@ -19,7 +19,8 @@ PROJECT_COLUMNS = """
     memory_mb, cpu_shares, keep_warm, stop_timeout_seconds, deploy_key_public,
     production_deployment_id,
     webhook_secret, created_at, updated_at,
-    github_installation_id, github_repo, preview_deploys, build_args
+    github_installation_id, github_repo, preview_deploys, build_args,
+    dockerfile_path, kind
 """
 
 
@@ -132,6 +133,8 @@ UPDATABLE = frozenset(
         "stop_timeout_seconds",
         "preview_deploys",
         "build_args",
+        "dockerfile_path",
+        "kind",
     }
 )
 

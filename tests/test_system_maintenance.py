@@ -408,11 +408,16 @@ class TestEngine:
 
         monkeypatch.setattr(maintenance.housekeeping, "run", housekeeping_run)
         monkeypatch.setattr(
-            maintenance.containers, "build_cache_bytes", lambda: _async(3_100_000_000)
+            maintenance.containers,
+            "build_cache_usage",
+            lambda: _async((3_100_000_000, 1_000_000_000)),
         )
         await maintenance.run_cleanup(SimpleNamespace(), run("cleanup", "running"))
         assert recorded["finish"][0][1] == "1 image removed"
-        assert recorded["state"]["build_cache"] == {"bytes": 3_100_000_000}
+        assert recorded["state"]["build_cache"] == {
+            "bytes": 3_100_000_000,
+            "own": 1_000_000_000,
+        }
 
     async def test_a_clean_up_where_every_step_failed_is_a_failure(
         self, recorded, monkeypatch
@@ -427,7 +432,7 @@ class TestEngine:
         }
         monkeypatch.setattr(maintenance.housekeeping, "run", lambda s: _async(report))
         monkeypatch.setattr(
-            maintenance.containers, "build_cache_bytes", lambda: _async(None)
+            maintenance.containers, "build_cache_usage", lambda: _async(None)
         )
         await maintenance.run_cleanup(SimpleNamespace(), run("cleanup", "running"))
         assert recorded["finish"] == [] and recorded["fail"][0][1] == "a; b; c; d"
@@ -531,3 +536,32 @@ class TestWorker:
         monkeypatch.setattr(module.deployment_repo, "claim_next", claim_next)
         await w._deploy_once()
         assert order == [("claim", "cleanup"), "cleanup", "deploy"]
+
+
+class TestBuildCacheMeasure:
+    """A real host: 12.36 GB of cache against an 8 GB cap, nothing pruned,
+    because only 7.656 GB was the cache's own (`docker system df`)."""
+
+    DF = (
+        '{"Type":"Images","Size":"10.35GB","Reclaimable":"958.5MB (9%)"}\n'
+        '{"Type":"Build Cache","Size":"12.36GB","Reclaimable":"7.656GB"}\n'
+    )
+
+    async def test_both_numbers_are_read(self, monkeypatch):
+        from deploypro.adapters import containers
+
+        async def capture(args, timeout=0):
+            return self.DF
+
+        monkeypatch.setattr(containers, "_capture", capture)
+        total, own = await containers.build_cache_usage()
+        assert total == 12_360_000_000 and own == 7_656_000_000
+
+    def test_the_page_compares_the_cap_with_what_it_governs(self):
+        fact = views.cache_fact({"bytes": 12_360_000_000, "own": 7_656_000_000}, cap_gb=8)
+        assert fact.text.startswith("7.7 GB") and "capped at 8 GB" in fact.text
+        assert "4.7 GB shared with your apps" in fact.note
+
+    def test_an_older_measurement_without_the_split_still_reads(self):
+        fact = views.cache_fact({"bytes": 3_100_000_000}, cap_gb=8)
+        assert fact.text == "3.1 GB · capped at 8 GB" and not fact.note

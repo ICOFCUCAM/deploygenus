@@ -21,13 +21,13 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from deploypro.domain import dockerfiles as gen
 from deploypro.domain.buildplan import DEFAULT_PORT, BuildPlan
 from deploypro.domain.dockerfiles import BUN, NPM, NPM_NO_LOCK, PNPM, YARN, NodeToolchain
-from deploypro.domain.errors import DetectionFailed
+from deploypro.domain.errors import DetectionFailed, InvalidRequest
 
 NEXT_CONFIGS = ("next.config.js", "next.config.mjs", "next.config.cjs", "next.config.ts")
 ASTRO_CONFIGS = ("astro.config.mjs", "astro.config.js", "astro.config.ts")
@@ -86,6 +86,47 @@ def detect(app_dir: Path, overrides: Overrides | None = None) -> BuildPlan:
 # ---------------------------------------------------------------------------
 # Explicit paths
 # ---------------------------------------------------------------------------
+
+
+_DOCKERFILE_PATH = re.compile(r"^[A-Za-z0-9._@+-]+(/[A-Za-z0-9._@+-]+)*$")
+
+
+def normalise_dockerfile_path(text: str) -> str:
+    """A project's Dockerfile path, checked: relative to the repository root,
+    inside it, and a file name rather than a folder. Empty means none."""
+    path = text.strip().removeprefix("./")
+    if not path:
+        return ""
+    parts = path.split("/")
+    if (
+        path.startswith("/")
+        or ".." in parts
+        or "." in parts
+        or not _DOCKERFILE_PATH.match(path)
+    ):
+        raise InvalidRequest(
+            "The Dockerfile path is relative to the repository root, like "
+            "services/api/Dockerfile."
+        )
+    return path
+
+
+def explicit_dockerfile(repo_dir: Path, path: str, *, port: int | None) -> BuildPlan:
+    """The plan for a Dockerfile the project names, in this checkout.
+
+    Built from the project's root directory (the repository root unless one
+    is set), whatever folder the Dockerfile sits in: that is what a monorepo's
+    `COPY packages/…` lines assume, and what Render's `dockerContext: .` did.
+    """
+    file = (repo_dir / path).resolve()
+    if not file.is_relative_to(repo_dir.resolve()) or not file.is_file():
+        raise DetectionFailed(
+            f"The project's Dockerfile path {path!r} is not a file in this commit."
+        )
+    return replace(
+        _from_repo_dockerfile(file, port=port),
+        reason=f"{path} in the repository — building it unchanged",
+    )
 
 
 def _from_repo_dockerfile(path: Path, *, port: int | None) -> BuildPlan:

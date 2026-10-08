@@ -814,7 +814,17 @@ def disk_fact(disk: Disk, *, alert_percent: int, min_free_gb: int) -> Fact:
 def cache_fact(state: dict | None, *, cap_gb: int) -> Fact:
     if not state or state.get("bytes") is None:
         return Fact("Build cache", f"not measured yet · capped at {cap_gb} GB")
-    return Fact("Build cache", f"{size(state['bytes'])} · capped at {cap_gb} GB")
+    own = state.get("own")
+    if own is None or own >= state["bytes"]:
+        return Fact("Build cache", f"{size(state['bytes'])} · capped at {cap_gb} GB")
+    # The cap governs only the cache's own part; the rest is the same data
+    # as images that exist, and goes when they do (containers.build_cache_usage).
+    return Fact(
+        "Build cache",
+        f"{size(own)} · capped at {cap_gb} GB",
+        note=f"Plus {size(state['bytes'] - own)} shared with your apps' images, "
+        "freed when those images are removed.",
+    )
 
 
 def _waiting_or_started(run: MaintenanceRun, now: datetime) -> str:

@@ -128,6 +128,17 @@ class Project:
     #: `NAME=value` lines passed to `docker build --build-arg`: plain switches
     #: for a Dockerfile's ARG lines, never secrets (domain.build_args).
     build_args: str = ""
+    #: A Dockerfile to build with, relative to the repository root; the build
+    #: context stays the root directory. Empty: `<root directory>/Dockerfile`
+    #: or detection, as before.
+    dockerfile_path: str = ""
+    #: `web` serves a website; `background` runs with no address at all (a
+    #: queue consumer from its own Dockerfile). See migration 0012.
+    kind: str = "web"
+
+    @property
+    def is_background(self) -> bool:
+        return self.kind == "background"
 
 
 @dataclass(frozen=True, slots=True)
