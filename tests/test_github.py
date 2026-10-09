@@ -433,8 +433,11 @@ class TestImporting:
         response = await client.get("/projects/new")
         assert "you/shop" in response.text and "private" in response.text
         assert "/projects/new/github?repo=you/shop&installation=42" in response.text
-        # Already imported: opened, not imported twice.
+        # Already imported: opened, or imported again as another app from the
+        # same repository (dispatch-api and dispatch-worker are both SOVEREIGN).
         assert 'href="/projects/blog"' in response.text
+        assert "/projects/new/github?repo=you/blog&installation=42" in response.text
+        assert "Import again" in response.text
 
     async def test_the_search_box_filters_the_list(self, client, connected, monkeypatch):
         monkeypatch.setattr(

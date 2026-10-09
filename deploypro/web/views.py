@@ -645,9 +645,9 @@ def worker_state(
 ) -> tuple[Mark | None, str]:
     """A worker's state, without a running count until one can be read.
 
-    Pausing and resuming a worker takes effect at the next deploy (Phase 3
-    Q-S4): the dashboard only flips the definition, and workers are reconciled
-    when production changes.
+    Pausing and resuming act at once: the worker's containers are drained or
+    started when the button is pressed (this replaced Phase 3 Q-S4's "at the
+    next deploy", which left a paused worker running until someone redeployed).
     """
     if production is None:
         return (
@@ -657,7 +657,7 @@ def worker_state(
     if not process.enabled:
         return (
             Mark("cancelled", "Paused"),
-            "Takes effect at the next deploy: a running worker keeps running until then.",
+            "Stopped. Nothing runs until it is resumed.",
         )
     # No mark: a green one would claim it is running, which only a Docker
     # read can say.

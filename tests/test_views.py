@@ -305,11 +305,11 @@ class TestConfiguration:
             == "Verified, not yet serving"
         )
 
-    def test_a_paused_worker_says_it_takes_effect_at_the_next_deploy(self):
-        """Q-S4: the dashboard only flips the definition."""
+    def test_a_paused_worker_says_it_is_stopped(self):
+        """Pausing acts at once, so the page no longer says 'next deploy'."""
         mark, sentence = views.worker_state(fakes.process(enabled=False), dep(19))
         assert mark.word == "Paused"
-        assert "next deploy" in sentence
+        assert sentence.startswith("Stopped.")
 
     def test_a_worker_never_claims_to_be_running(self):
         """Running counts need a Docker read ([small]); until then, none."""

@@ -106,6 +106,10 @@
         <div class="np-actions">
         {% if repo.project_slug %}
           <a class="btn btn-small" href="/projects/{{ repo.project_slug }}">Open project</a>
+          {# One repository can hold several apps: another project from it is a
+             second import, with its own name, root directory or Dockerfile path. #}
+          <a class="btn btn-small"
+             href="/projects/new/github?repo={{ repo.full_name | urlencode }}&installation={{ repo.installation_id }}">Import again<span class="visually-hidden"> {{ repo.full_name }} as another project</span></a>
         {% else %}
           <a class="btn btn-small btn-primary"
              href="/projects/new/github?repo={{ repo.full_name | urlencode }}&installation={{ repo.installation_id }}">Import</a>
