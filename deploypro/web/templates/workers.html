@@ -32,7 +32,7 @@
   </li>
   {% endfor %}
 </ul>
-<p class="section-lead small">Pausing or resuming a worker takes effect at the next deploy: until then a running worker keeps running.</p>
+<p class="section-lead small">Pausing a worker stops it now, giving it the graceful shutdown time to finish its work. Resuming starts it now, on the production image.</p>
 {% elif production %}
 <div class="empty"><p>No workers. A worker is a long-running process from the same image as the site — a queue consumer, a renderer.</p></div>
 {% else %}

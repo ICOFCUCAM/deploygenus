@@ -75,11 +75,7 @@ async def reconcile_workers(
     if not deployment.image_tag:
         raise Conflict("This deployment has no image, so its workers cannot start")
 
-    env = await _environment(
-        project, deployment, settings=settings, target=EnvTarget.PRODUCTION
-    )
-    env_file = environment.write_runtime_env_file(env, workdir / "worker.env")
-    mounts = await storage.mounts_for(project, target=EnvTarget.PRODUCTION)
+    prepared = await _prepare(project, deployment, settings=settings, workdir=workdir)
 
     started = 0
     for name, process in sorted(wanted.items()):
@@ -90,26 +86,7 @@ async def reconcile_workers(
         if name in existing:
             await containers.drain(name, grace=project.stop_timeout_seconds)
             await log.system(_draining_message(name, project))
-        await containers.run_worker(
-            containers.TaskSpec(
-                image=deployment.image_tag,
-                name=name,
-                network=settings.network,
-                command=process.command,
-                memory_mb=process.memory_mb,
-                env_file=env_file,
-                inline_env=env.inline,
-                volumes=mounts,
-                stop_timeout=project.stop_timeout_seconds,
-                labels={
-                    containers.OWNER_LABEL: containers.OWNER_VALUE,
-                    containers.PROJECT_LABEL: project.slug,
-                    containers.PROCESS_LABEL: process.name,
-                    containers.ROLE_LABEL: "worker",
-                    containers.DEPLOYMENT_LABEL: deployment.short_id,
-                },
-            )
-        )
+        await _start(name, process, project, deployment, prepared, settings=settings)
         started += 1
 
     await log.system(
@@ -117,6 +94,89 @@ async def reconcile_workers(
         f"deployment #{deployment.number}"
     )
     return started
+
+
+async def apply_worker(
+    project: Project,
+    process: Process,
+    *,
+    settings: Settings,
+    log: LogWriter,
+    workdir: Path,
+) -> int:
+    """Pause or resume one worker now, rather than at the next deploy.
+
+    Paused: each replica is drained — asked to stop, with the project's
+    graceful shutdown time to finish its work. Resumed: each replica that is
+    not running starts on the production image; with no production yet, it
+    starts with the first one. Other workers are left alone. Returns how many
+    containers were stopped or started.
+    """
+    names = [
+        naming.worker_container_name(project.slug, process.name, replica)
+        for replica in range(process.replicas)
+    ]
+    if not process.enabled:
+        for name in names:
+            await containers.drain(name, grace=project.stop_timeout_seconds)
+            await log.system(_draining_message(name, project) + " (paused)")
+        return len(names)
+
+    deployment = await _production_deployment(project)
+    if deployment is None:
+        return 0
+    missing = [name for name in names if await containers.state(name) != "running"]
+    if not missing:
+        return 0
+    prepared = await _prepare(project, deployment, settings=settings, workdir=workdir)
+    for name in missing:
+        await _start(name, process, project, deployment, prepared, settings=settings)
+        await log.system(f"resumed worker {name} on deployment #{deployment.number}")
+    return len(missing)
+
+
+async def _prepare(
+    project: Project, deployment: Deployment, *, settings: Settings, workdir: Path
+):
+    """What every worker container of `deployment` is started with."""
+    env = await _environment(
+        project, deployment, settings=settings, target=EnvTarget.PRODUCTION
+    )
+    env_file = environment.write_runtime_env_file(env, workdir / "worker.env")
+    mounts = await storage.mounts_for(project, target=EnvTarget.PRODUCTION)
+    return env, env_file, mounts
+
+
+async def _start(
+    name: str,
+    process: Process,
+    project: Project,
+    deployment: Deployment,
+    prepared,
+    *,
+    settings: Settings,
+) -> str:
+    env, env_file, mounts = prepared
+    return await containers.run_worker(
+        containers.TaskSpec(
+            image=deployment.image_tag,
+            name=name,
+            network=settings.network,
+            command=process.command,
+            memory_mb=process.memory_mb,
+            env_file=env_file,
+            inline_env=env.inline,
+            volumes=mounts,
+            stop_timeout=project.stop_timeout_seconds,
+            labels={
+                containers.OWNER_LABEL: containers.OWNER_VALUE,
+                containers.PROJECT_LABEL: project.slug,
+                containers.PROCESS_LABEL: process.name,
+                containers.ROLE_LABEL: "worker",
+                containers.DEPLOYMENT_LABEL: deployment.short_id,
+            },
+        )
+    )
 
 
 async def run_job(run: JobRun, process: Process, *, settings: Settings) -> JobRun:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
+from urllib.parse import unquote
 
 import httpx
 import pytest
@@ -703,27 +705,66 @@ class TestForms:
             "/projects/blog/config/environment?ok="
         )
 
-    async def test_pausing_a_worker_says_it_takes_effect_at_the_next_deploy(
-        self, client, repos, monkeypatch
-    ):
-        """Q-S4: the old message said "mailer paused." while it kept running."""
+    @pytest.fixture
+    def toggling(self, repos, monkeypatch):
+        """The flag flip and the container work, recorded."""
+        seen = {"changes": None, "applied": None}
 
         async def update(_id, changes):
-            return None
+            seen["changes"] = changes
+            process = repos["processes"][0]
+            repos["processes"][0] = replace(process, **changes)
+
+        async def get(_id):
+            return repos["processes"][0]
+
+        async def apply_worker(project, process, **kw):
+            seen["applied"] = (process.name, process.enabled, kw["workdir"].name)
+            return 1
+
+        class Log:
+            async def flush(self):
+                pass
+
+        async def resume(_id):
+            return Log()
 
         monkeypatch.setattr("deploypro.web.routes.process_repo.update", update)
+        monkeypatch.setattr("deploypro.web.routes.process_repo.get", get)
+        monkeypatch.setattr(
+            "deploypro.web.routes.process_engine.apply_worker", apply_worker
+        )
+        monkeypatch.setattr("deploypro.web.routes.LogWriter.resume", resume)
+        return seen
+
+    async def test_pausing_a_worker_stops_it_now(self, client, toggling):
+        """It used to wait for the next deploy, so freeing the server took a
+        redeploy or `docker stop` (October 2026, BalanceVid's playout)."""
         response = await client.post("/projects/blog/processes/mailer/toggle")
-        location = response.headers["location"]
+        location = unquote(response.headers["location"])
         assert location.startswith("/projects/blog/runtime/workers?ok=")
-        assert "next%20deploy" in location
+        assert "mailer paused: asked to stop" in location
+        assert toggling["changes"] == {"enabled": False}
+        assert toggling["applied"] == ("mailer", False, "blog-3f9a2c71")
 
-    async def test_a_form_can_only_return_to_this_dashboard(
-        self, client, repos, monkeypatch
-    ):
-        async def update(_id, changes):
-            return None
+    async def test_resuming_starts_it_on_production(self, client, repos, toggling):
+        repos["processes"][0] = replace(repos["processes"][0], enabled=False)
+        response = await client.post("/projects/blog/processes/mailer/toggle")
+        assert "resumed: running deployment #14" in unquote(response.headers["location"])
+        assert toggling["applied"][:2] == ("mailer", True)
 
-        monkeypatch.setattr("deploypro.web.routes.process_repo.update", update)
+    async def test_docker_refusing_is_said(self, client, toggling, monkeypatch):
+        from deploypro.adapters.containers import DockerError
+
+        async def refuse(*a, **k):
+            raise DockerError("Cannot connect to the Docker daemon")
+
+        monkeypatch.setattr("deploypro.web.routes.process_engine.apply_worker", refuse)
+        response = await client.post("/projects/blog/processes/mailer/toggle")
+        location = unquote(response.headers["location"])
+        assert "err=" in location and "Docker daemon" in location
+
+    async def test_a_form_can_only_return_to_this_dashboard(self, client, toggling):
         response = await client.post(
             "/projects/blog/processes/mailer/toggle",
             data={"back": "https://evil.example/"},

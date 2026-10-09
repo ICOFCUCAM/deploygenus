@@ -20,7 +20,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from deploypro.adapters import crypto, notify
+from deploypro.adapters import containers, crypto, notify
 from deploypro.config import Settings, get_settings
 from deploypro.deps import SettingsDep, token_matches
 from deploypro.domain import build_args as build_args_rules
@@ -44,6 +44,7 @@ from deploypro.domain.storage import (
     validate_volume_name,
 )
 from deploypro.engine import dns, previews, routing, service, verify
+from deploypro.engine import processes as process_engine
 from deploypro.engine import promote as promote_engine
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
@@ -621,32 +622,66 @@ async def add_process(
 
 @router.post("/projects/{slug}/processes/{name}/toggle")
 async def toggle_process(
-    request: Request, slug: str, name: str, back: Annotated[str, Form()] = ""
+    request: Request,
+    slug: str,
+    name: str,
+    settings: SettingsDep,
+    back: Annotated[str, Form()] = "",
 ):
-    """Pause or resume.
+    """Pause or resume, now.
 
-    For a job this is immediate: the scheduler reads only enabled jobs. For a
-    worker it is not: workers are reconciled when production changes, so the
-    message says the next deploy (Phase 3 Q-S4) rather than claiming a
-    running worker has stopped.
+    A job: the scheduler reads only enabled jobs. A worker: its containers
+    are drained or started straight away, so pausing one to free the server
+    never needs a redeploy or `docker stop`. Only that worker is touched.
     """
     signed_in(request)
     project = await project_repo.get_by_slug(slug)
     process = await process_repo.get_by_name(project.id, name)
     await process_repo.update(process.id, {"enabled": not process.enabled})
+    target = _back(back, _process_list(slug, process.type))
     if process.type is ProcessType.CRON:
         message = (
             f"{name} paused: no runs are scheduled."
             if process.enabled
             else f"{name} resumed."
         )
-    else:
+        return _redirect(target, ok=message)
+
+    if project.production_deployment_id is None:
         message = (
-            f"{name} pauses at the next deploy. It keeps running until then."
+            f"{name} paused."
             if process.enabled
-            else f"{name} resumes at the next deploy."
+            else f"{name} resumed. It starts with the first deploy."
         )
-    return _redirect(_back(back, _process_list(slug, process.type)), ok=message)
+        return _redirect(target, ok=message)
+
+    production = await deployment_repo.get(project.production_deployment_id)
+    log = await LogWriter.resume(production.id)
+    try:
+        await process_engine.apply_worker(
+            project,
+            await process_repo.get(process.id),
+            settings=settings,
+            log=log,
+            workdir=settings.build_root / production.short_id,
+        )
+    except (DeployProError, containers.DockerError) as exc:
+        detail = getattr(exc, "message", None) or str(exc)
+        return _redirect(
+            target,
+            err=f"{name} is {'paused' if process.enabled else 'resumed'}, but Docker "
+            f"refused: {detail}",
+        )
+    finally:
+        await log.flush()
+    if process.enabled:
+        message = (
+            f"{name} paused: asked to stop, with up to "
+            f"{project.stop_timeout_seconds}s to finish what it is doing."
+        )
+    else:
+        message = f"{name} resumed: running deployment #{production.number}."
+    return _redirect(target, ok=message)
 
 
 @router.post("/projects/{slug}/processes/{name}/run")
