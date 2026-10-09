@@ -99,7 +99,8 @@
           </div>
         </div>
       </td>
-      <td><span class="pill">{{ icon('branch') }}{{ repo.suggested_branch or repo.default_branch }}</span></td>
+      {% set branch = repo.suggested_branch or repo.default_branch %}
+      <td><span class="pill np-branch" title="{{ branch }}">{{ icon('branch') }}<span class="np-branch-name">{{ branch }}</span></span></td>
       <td>{% if repo.private %}<span class="np-vis np-private">{{ icon('lock') }}Private</span>{% else %}<span class="np-vis">{{ icon('globe') }}Public</span>{% endif %}</td>
       <td class="muted">{{ pushed[repo.full_name] }}</td>
       <td>
@@ -114,7 +115,7 @@
           <a class="btn btn-small btn-primary"
              href="/projects/new/github?repo={{ repo.full_name | urlencode }}&installation={{ repo.installation_id }}">Import</a>
         {% endif %}
-        {% if repo.html_url %}<a class="btn btn-small" href="{{ repo.html_url }}" rel="noreferrer" target="_blank">Open {{ icon('external') }}<span class="visually-hidden"> {{ repo.full_name }} on GitHub</span></a>{% endif %}
+        {% if repo.html_url %}<a class="btn btn-small np-github" href="{{ repo.html_url }}" rel="noreferrer" target="_blank" title="Open on GitHub">{{ icon('external') }}<span class="visually-hidden">Open {{ repo.full_name }} on GitHub</span></a>{% endif %}
         </div>
       </td>
     </tr>
