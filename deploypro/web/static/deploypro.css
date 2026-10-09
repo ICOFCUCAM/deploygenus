@@ -1238,13 +1238,21 @@ dl.facts-rows dt a:hover { color: var(--blue); }
 .np-repo-text { display: flex; flex-direction: column; min-width: 0; }
 .np-repo-name { font-weight: 600; color: var(--text); }
 .np-repo-full { font-size: 0.8125rem; }
-.np-repo-name, .np-repo-full { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34ch; }
+.np-repo-name, .np-repo-full { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 30ch; }
 .np-table td { padding-top: 12px; padding-bottom: 12px; }
 .np-table .pill { font-weight: 500; font-family: var(--mono); font-size: 0.75rem; }
 .np-vis { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
 .np-vis .icon { width: 0.9375rem; height: 0.9375rem; }
 .np-private { color: var(--success); }
-.np-actions { display: flex; gap: 8px; justify-content: flex-end; }
+/* The actions must always be visible: a long branch or repository name gives
+   way (ellipsis, full text on hover) and the buttons wrap before they would
+   be pushed past the card's edge. */
+.np-branch { max-width: 100%; }
+.np-branch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 18ch; }
+.np-actions { display: flex; flex-wrap: wrap; gap: 6px 8px; justify-content: flex-end; }
+.np-table td:last-child { white-space: normal; min-width: 9.5rem; }
+.np-actions .btn { white-space: nowrap; }
+.np-github { padding-left: 8px; padding-right: 8px; }
 .np-table td:last-child { text-align: right; }
 .np-table td .np-actions a.btn { font-weight: 600; }
 .np-steplist { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 0; }
@@ -1266,6 +1274,14 @@ dl.facts-rows dt a:hover { color: var(--blue); }
 .np-steplist .muted { font-size: 0.875rem; }
 .np-other p { margin: 0; }
 
+/* Narrower, the columns that matter least go first — the import form shows
+   the branch anyway — so the actions never leave the card. */
+@media (max-width: 1599px) {
+  .np-table th:nth-child(2), .np-table td:nth-child(2) { display: none; }
+}
+@media (max-width: 1399px) {
+  .np-table th:nth-child(4), .np-table td:nth-child(4) { display: none; }
+}
 @media (max-width: 1099px) {
   .np-grid { grid-template-columns: minmax(0, 1fr); }
   .np-aside { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
