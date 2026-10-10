@@ -226,6 +226,11 @@ async def stop(container_id: str, *, timeout: int = 10) -> None:
             raise
 
 
+async def start(name_or_id: str) -> None:
+    """Start a stopped container, keeping its settings and its volumes."""
+    await _capture(["start", name_or_id])
+
+
 async def remove(container_id: str, *, force: bool = True) -> None:
     args = ["rm"] + (["--force"] if force else []) + [container_id]
     try:
@@ -867,6 +872,119 @@ async def run_worker(spec: TaskSpec) -> str:
     ]
     out = await _capture(args)
     return out.strip().splitlines()[-1]
+
+
+# ---------------------------------------------------------------------------
+# Services: long-running containers a project uses but does not build (Redis)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceSpec:
+    """A container from a public image, reachable only on DeployPro's network.
+
+    No router labels and no published port: the only way in is from another
+    container on the same network, by name.
+    """
+
+    image: str
+    name: str
+    network: str
+    memory_mb: int
+    shell_command: str
+    env: dict[str, str] = field(default_factory=dict)
+    labels: dict[str, str] = field(default_factory=dict)
+    volumes: tuple[Mount, ...] = ()
+    stop_timeout: int = 30
+
+
+async def run_service(spec: ServiceSpec) -> str:
+    """Start a service container and return its id.
+
+    Its environment goes in through `--env-file` from a private temporary
+    file rather than `--env` arguments, so a secret in it never appears in a
+    process listing of the host while `docker run` is running.
+    """
+    import os
+    import tempfile
+
+    await remove_by_name(spec.name)
+    fd, env_path = tempfile.mkstemp(prefix="deploypro-svc-", suffix=".env")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write("".join(f"{k}={v}\n" for k, v in spec.env.items()))
+        args = [
+            "run",
+            "--detach",
+            "--name",
+            spec.name,
+            "--network",
+            spec.network,
+            "--restart",
+            "unless-stopped",
+            f"--memory={spec.memory_mb}m",
+            "--pids-limit=256",
+            "--security-opt=no-new-privileges",
+            f"--stop-timeout={spec.stop_timeout}",
+            "--log-opt",
+            "max-size=10m",
+            "--log-opt",
+            "max-file=3",
+            "--label",
+            "traefik.enable=false",
+            "--env-file",
+            env_path,
+            *_mount_args(spec.volumes),
+        ]
+        for key, value in spec.labels.items():
+            args += ["--label", f"{key}={value}"]
+        args += ["--entrypoint", "/bin/sh", spec.image, "-c", spec.shell_command]
+        out = await _capture(args)
+    finally:
+        os.unlink(env_path)
+    return out.strip().splitlines()[-1]
+
+
+async def label(name_or_id: str, key: str) -> str | None:
+    """One label of a container, or None if it or the label is missing."""
+    try:
+        out = await _capture(
+            ["inspect", "--format", '{{index .Config.Labels "' + key + '"}}', name_or_id]
+        )
+    except DockerError:
+        return None
+    value = out.strip()
+    return None if value in ("", "<no value>") else value
+
+
+async def exec_capture(name_or_id: str, shell: str, *, timeout: int = 30) -> str:
+    """Run a shell command inside a running container and return its output.
+
+    A shell string, so a command can read a secret from the container's own
+    environment (`"$VALKEY_PASSWORD"`) instead of carrying it as an argument
+    to `docker exec`, where the host's process listing would show it.
+    """
+    return await _capture(["exec", name_or_id, "/bin/sh", "-c", shell], timeout=timeout)
+
+
+async def remove_volume(name: str) -> bool:
+    """Delete a volume. False if it did not exist. Only ever called when the
+    owner asked for the data to be deleted."""
+    try:
+        await _capture(["volume", "rm", name])
+    except DockerError as exc:
+        if is_missing(exc) or "no such volume" in str(exc).lower():
+            return False
+        raise
+    return True
+
+
+async def volume_exists(name: str) -> bool:
+    try:
+        await _capture(["volume", "inspect", name])
+    except DockerError:
+        return False
+    return True
 
 
 async def run_once(spec: TaskSpec, *, timeout: int) -> TaskResult:

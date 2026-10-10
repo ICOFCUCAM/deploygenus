@@ -387,6 +387,82 @@ async def cmd_volume_rm(args: argparse.Namespace, settings: Settings) -> None:
     print(f"  to delete it for good, once nothing uses it:  docker volume rm {name}")
 
 
+async def cmd_redis_enable(args: argparse.Namespace, settings: Settings) -> None:
+    from deploypro.domain import redis as rules
+    from deploypro.engine import redis as redis_engine
+
+    project = await project_repo.resolve(args.project)
+    config = await redis_engine.enable(
+        project,
+        memory_mb=rules.validate_memory(args.memory),
+        policy=rules.validate_policy(args.policy),
+        env_names=rules.parse_env_names(args.names),
+        settings=settings,
+    )
+    print(f"redis running for {project.slug}: {rules.container_name(project.slug)}")
+    print(f"  memory  {config.memory_mb} MB, when full: {config.policy}")
+    print(f"  app gets {' '.join(config.env_names)} in production from its next deploy")
+    print("  reachable only on this server's network; no port is published")
+
+
+async def cmd_redis_status(args: argparse.Namespace, settings: Settings) -> None:
+    from deploypro.domain import redis as rules
+    from deploypro.engine import redis as redis_engine
+    from deploypro.repositories import redis as redis_repo
+
+    project = await project_repo.resolve(args.project)
+    config = await redis_repo.get(project.id)
+    if config is None:
+        print(f"no redis for {project.slug} — deploypro redis enable {project.slug}")
+        return
+    status = await redis_engine.status(project, config)
+    print(f"{rules.container_name(project.slug)}  {status.state}")
+    if status.used_bytes is not None:
+        print(
+            f"  memory  {status.used_bytes / 1048576:.1f} MB used "
+            f"({status.used_percent}% of {rules.maxmemory_mb(config.memory_mb)} MB)"
+        )
+    if status.keys is not None:
+        print(f"  keys    {status.keys}")
+    print(f"  policy  {config.policy}")
+    print(f"  vars    {' '.join(config.env_names)}")
+    print(f"  volume  {redis_engine.volume_name(project)}")
+
+
+async def cmd_redis_restart(args: argparse.Namespace, settings: Settings) -> None:
+    from deploypro.engine import redis as redis_engine
+
+    project = await project_repo.resolve(args.project)
+    await redis_engine.restart(project, settings=settings)
+    print("restarted; data kept")
+
+
+async def cmd_redis_resize(args: argparse.Namespace, settings: Settings) -> None:
+    from deploypro.domain import redis as rules
+    from deploypro.engine import redis as redis_engine
+
+    project = await project_repo.resolve(args.project)
+    config = await redis_engine.update(
+        project, {"memory_mb": rules.validate_memory(args.memory)}, settings=settings
+    )
+    print(f"redis now has {config.memory_mb} MB; data kept")
+
+
+async def cmd_redis_disable(args: argparse.Namespace, settings: Settings) -> None:
+    from deploypro.engine import redis as redis_engine
+
+    project = await project_repo.resolve(args.project)
+    deleted = await redis_engine.disable(project, delete_data=args.delete_data)
+    print(
+        "redis removed; "
+        + (
+            "its data was deleted"
+            if deleted
+            else (f"its data is kept in {redis_engine.volume_name(project)}")
+        )
+    )
+
+
 async def cmd_backup(args: argparse.Namespace, settings: Settings) -> None:
     from deploypro.engine import backup
 
@@ -1016,6 +1092,38 @@ def _parser() -> argparse.ArgumentParser:
     vol_rm.add_argument("project")
     vol_rm.add_argument("name")
     vol_rm.set_defaults(handler=cmd_volume_rm)
+
+    redis = sub.add_parser(
+        "redis", help="a project's built-in Redis (Valkey)"
+    ).add_subparsers()
+    redis_on = redis.add_parser("enable", help="start a Redis for the project")
+    redis_on.add_argument("project")
+    redis_on.add_argument("--memory", default="256", help="MB, 64-4096; default 256")
+    redis_on.add_argument(
+        "--policy",
+        default="noeviction",
+        help="noeviction (job queues; default), allkeys-lru or volatile-lru",
+    )
+    redis_on.add_argument(
+        "--names", default="REDIS_URL", help="variable names, space-separated"
+    )
+    redis_on.set_defaults(handler=cmd_redis_enable)
+    redis_status = redis.add_parser("status")
+    redis_status.add_argument("project")
+    redis_status.set_defaults(handler=cmd_redis_status)
+    redis_restart = redis.add_parser("restart", help="restart it; data is kept")
+    redis_restart.add_argument("project")
+    redis_restart.set_defaults(handler=cmd_redis_restart)
+    redis_resize = redis.add_parser("resize", help="change its memory; data is kept")
+    redis_resize.add_argument("project")
+    redis_resize.add_argument("memory", help="MB, 64-4096")
+    redis_resize.set_defaults(handler=cmd_redis_resize)
+    redis_off = redis.add_parser("disable", help="stop and remove it (keeps its data)")
+    redis_off.add_argument("project")
+    redis_off.add_argument(
+        "--delete-data", action="store_true", help="also delete every key; final"
+    )
+    redis_off.set_defaults(handler=cmd_redis_disable)
 
     backup_cmd = sub.add_parser("backup", help="back up the database and every volume")
     backup_cmd.add_argument("--dest", help="default: DEPLOYPRO_BACKUP_DIR")

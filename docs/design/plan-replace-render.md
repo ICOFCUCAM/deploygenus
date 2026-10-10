@@ -41,8 +41,8 @@
 |---|---|---|---|
 | `dispatch-api` | Docker, web, Frankfurt | A **project** from its repository, with **Dockerfile path** `services/dispatch-api/Dockerfile` (G1) | **Yes, with G1** |
 | `dispatch-worker` | Docker, background, **own Dockerfile** | A **background service** project (G2, §2a) | **Ready** (G2 built) |
-| `cineforge-worker` | Docker, background, **own Dockerfile** | A **background service** project (G2, §2a) | **After Redis** (G2 built) |
-| `cineforge-redis` | Valkey 8 | **Built-in Redis** on the cineforge project (Phase 1) | **After Phase 1** |
+| `cineforge-worker` | Docker, background, **own Dockerfile** | A **background service** project (G2, §2a) | **Ready** (G2 and Redis built) |
+| `cineforge-redis` | Valkey 8 | **Built-in Redis** on the cineforge project (Phase 1) | **Ready** (Phase 1 built) |
 | Postgres (Supabase) | managed | **Stays on Supabase**; its URL goes into Environment as now | **Yes** |
 | GPU work (RunPod L4 pod) | GPU | **Stays on RunPod**; workers keep calling it with their API key | **Yes** |
 
@@ -142,6 +142,28 @@ On Render, Dispatch and CineForge share `cineforge-redis`. Two ways on DeployPro
 
 **Estimate:** about two working days including the real-Docker checks.
 
+### 3.10 Built (2026-10-10)
+
+Built as specified, with these differences, each deliberate:
+- **The volume is `deploypro_<slug>__redis`** (two underscores), not `_redis`. A project volume may be called `redis`; a volume name can never start with `_`, so this one cannot collide. Restore with `deploypro restore-volume <backup> <project> _redis`.
+- **Deleting a project keeps the Redis volume**, as it keeps every volume: DeployPro never deletes data by side effect. The container goes with the project's other containers; the settings row goes with the project.
+- **The password reaches Valkey through the container's environment**, read by `sh -c 'exec … --requirepass "$VALKEY_PASSWORD"'`, never as an argument: arguments are visible in the host's `ps`. The env file is written mode 600 and removed after `docker run`. `valkey-cli` inside the container authenticates from the same variable.
+- **"Kept running" is the monitor's minute-by-minute pass**, not the promotion reconcile, so it also covers a project with nothing deployed yet. A container Docker will not restart on its own (one stopped by hand, `docker kill`) is started again there.
+
+Checked on a real Docker host (§3.9):
+
+| Check | Result |
+|---|---|
+| Add Redis → an app container on the network `SET`/`GET`s through `REDIS_URL` | ✅ |
+| Wrong password refused; a container off the network cannot resolve it; no host port (`docker port` empty) | ✅ |
+| Password absent from the host's process list and from `docker inspect` Args | ✅ |
+| `noeviction` and full: writes fail with `OOM`, existing keys kept | ✅ |
+| Container removed → recreated with every key; memory 128 → 256 MB → recreated, keys kept | ✅ |
+| Backup (after `BGREWRITEAOF`) → volume emptied → restored → keys and queue back, writable | ✅ |
+| Deploy, promotion and rollback never touch the container | by construction: no deploy path refers to it (only reads its URL) |
+
+`scripts/check.sh`: 788 passed.
+
 ## 4. Phase 2 — Move Dispatch and CineForge off Render
 
 Runbook, per application:
@@ -197,7 +219,7 @@ The owner's decision is to upgrade the server as needed. In order:
 | 4. G2 Background services (§2a) | Claude — **done** | Both workers |
 | 5. Rescale or add a server (§5.2–5.3) | owner | Room for the migrated services |
 | 6. Migrate Dispatch (§4) | together | First service off Render |
-| 7. Build built-in Redis (§3) | Claude, ~2 days | CineForge's queue |
+| 7. Build built-in Redis (§3) | Claude — **done** (§3.10) | CineForge's queue |
 | 8. Migrate CineForge (§4) | together | Render no longer needed |
 | 9. Delete the Render services, after the real workloads ran | owner | No double running, no Render bill |
 | 10. Phases 4–5 | later | Multi-server, GPU orchestration |

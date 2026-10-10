@@ -150,6 +150,11 @@ class Settings:
     backup_hour: int = 3
     backup_keep: int = 7
 
+    #: The image a project's built-in Redis runs (docs/design/plan-replace-render.md
+    #: §3). Valkey, the engine Render's Key Value runs. Read when Redis is added
+    #: to a project, so changing it affects new ones only.
+    redis_image: str = "valkey/valkey:8-alpine"
+
     # -- Live-site previews -----------------------------------------------------
 
     #: The browser image that photographs each project's live site for its
@@ -265,6 +270,7 @@ def get_settings() -> Settings:
         ),
         backup_hour=_int("DEPLOYPRO_BACKUP_HOUR", 3) % 24,
         backup_keep=max(_int("DEPLOYPRO_BACKUP_KEEP", 7), 1),
+        redis_image=_optional("DEPLOYPRO_REDIS_IMAGE", "valkey/valkey:8-alpine").strip(),
         preview_image=os.environ.get(
             "DEPLOYPRO_PREVIEW_IMAGE", "zenika/alpine-chrome:latest"
         ).strip(),

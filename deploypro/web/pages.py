@@ -28,6 +28,7 @@ from deploypro.repositories import maintenance as maintenance_repo
 from deploypro.repositories import previews as preview_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
+from deploypro.repositories import redis as redis_repo
 from deploypro.repositories import volumes as volume_repo
 from deploypro.web import views
 from deploypro.web.routes import describe_schedule, render, signed_in
@@ -206,6 +207,7 @@ async def overview_page(
             "preview": preview_view,
             "stats": views.deploy_stats(week, now),
             "volumes": await volume_repo.list_for_project(project.id),
+            "redis": await redis_repo.get(project.id),
             "live_url": ""
             if project.is_background
             else f"https://{primary_host}"
@@ -517,6 +519,7 @@ async def config_page(
             "domains": domains,
             "waiting": [d for d in domains if not d.is_verified],
             "volumes": volumes,
+            "redis": await redis_repo.get(project.id),
             "backups": settings.backup_dir is not None,
             "framework": _framework(project, production),
             "ok": ok,

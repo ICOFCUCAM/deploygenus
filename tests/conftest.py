@@ -42,3 +42,22 @@ def package_json():
         return base
 
     return make
+
+
+@pytest.fixture(autouse=True)
+def no_redis(monkeypatch):
+    """No project has a built-in Redis unless a test gives it one.
+
+    Starting any production container asks whether the project has Redis,
+    which is a database read; the suite has no database. A test about Redis
+    replaces this with its own `redis_repo.get`.
+    """
+
+    async def none(_project_id):
+        return None
+
+    async def empty():
+        return []
+
+    monkeypatch.setattr("deploypro.repositories.redis.get", none)
+    monkeypatch.setattr("deploypro.repositories.redis.list_all", empty)

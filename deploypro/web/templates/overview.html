@@ -244,6 +244,8 @@
       </dd>
       <dt><a href="/projects/{{ project.slug }}/config/storage">Storage</a></dt>
       <dd>{% if volumes %}{{ volumes | length }} mount{{ '' if volumes | length == 1 else 's' }}{% else %}<span class="muted">None</span>{% endif %}</dd>
+      <dt><a href="/projects/{{ project.slug }}/config/redis">Redis</a></dt>
+      <dd>{% if redis %}{{ redis.memory_mb }} MB · <span class="mono">{{ redis.env_names | join(' ') }}</span>{% else %}<span class="muted">None</span>{% endif %}</dd>
       <dt>Resources</dt><dd>{{ project.memory_mb }} MB · {{ '%g' % project.cpu_shares }} CPU</dd>
     </dl>
     <p class="card-foot"><a class="with-icon" href="/system">Server details {{ icon('chevron') }}</a></p>

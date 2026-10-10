@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% from "_macros.html" import message, status as status_mark %}
+{% block title %}Redis — {{ project.name }} — DeployPro{% endblock %}
+{% block content %}
+
+<div class="head">
+  <div class="head-main">
+    <h1>Redis</h1>
+    <p class="head-sub">A Redis for this project’s job queues and caches, on this server. Reachable only by this server’s containers, never from the internet. Deploys don’t restart it, so queued jobs survive them.</p>
+  </div>
+</div>
+{{ message(ok, err) }}
+
+{% if config %}
+{% set rs = redis_status %}{% set running = rs and rs.running %}
+<section class="section" aria-labelledby="state">
+  <h2 id="state">Status</h2>
+  <dl class="facts" style="margin-top:12px">
+    <dt>State</dt>
+    <dd>
+      {% if running %}{{ status_mark({'shape': 'ready', 'word': 'Running', 'tone': 'success'}) }}
+      {% else %}{{ status_mark({'shape': 'failed', 'word': (rs.state | capitalize) if rs else 'Unknown', 'tone': 'failure'}) }}
+        <span class="muted">DeployPro starts it again within a minute.</span>
+      {% endif %}
+      {% if rs and rs.error %}<span class="muted">{{ rs.error }}</span>{% endif %}
+    </dd>
+    <dt>Memory</dt>
+    <dd>
+      {% if running and rs.used_bytes is not none %}
+        {{ '%.1f' % (rs.used_bytes / 1048576) }} MB used of {{ (config.memory_mb * 0.9) | int }} MB
+        <span class="muted">({{ rs.used_percent }}%)</span>
+        {% if rs.used_percent >= warn_percent %}
+          <strong>Nearly full.</strong>
+          {% if config.policy == 'noeviction' %}New jobs will be refused when it fills. Raise its memory below.{% else %}It will start evicting keys.{% endif %}
+        {% endif %}
+      {% else %}<span class="muted">—</span>{% endif %}
+      <p class="hint">The container has {{ config.memory_mb }} MB; Redis keeps 90% of it for data.</p>
+    </dd>
+    <dt>Keys</dt><dd>{{ rs.keys if running and rs.keys is not none else '—' }}</dd>
+    <dt>Variables</dt>
+    <dd>
+      {% for name in config.env_names %}<span class="mono">{{ name }}</span>{{ ', ' if not loop.last }}{% endfor %}
+      <span class="muted">· production, its workers and its jobs; previews never get it</span>
+      {% if overridden %}
+        <p class="hint">Your own {{ overridden | join(', ') }} under <a href="/projects/{{ project.slug }}/config/environment">Environment</a> is used instead of this Redis.</p>
+      {% endif %}
+    </dd>
+    <dt>Data</dt>
+    <dd>
+      Docker volume <span class="mono">{{ volume }}</span>, append-only file synced every second
+      <span class="muted">· {{ 'included in the daily backup' if backups else 'backups are off' }}</span>
+    </dd>
+  </dl>
+
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
+    <form method="post" action="/projects/{{ project.slug }}/redis/restart"><button class="btn" type="submit">Restart</button></form>
+    <form method="post" action="/projects/{{ project.slug }}/redis/url"><button class="btn" type="submit" aria-describedby="url_hint">Show connection URL</button></form>
+  </div>
+  <p class="hint" id="url_hint">The full URL, password included, for pasting into another project’s Environment. Both projects are on this server, so it works from either.</p>
+  {% if reveal %}
+  <div class="field" style="margin-top:12px">
+    <label for="reveal">Connection URL</label>
+    <input class="mono-input" type="text" id="reveal" value="{{ reveal }}" readonly autocomplete="off" spellcheck="false" onfocus="this.select()">
+    <p class="hint">Shown once, for this page only. It contains the password: paste it only into Environment, never into a chat or a document.</p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="section" aria-labelledby="settings">
+  <h2 id="settings">Settings</h2>
+  <form class="form" method="post" action="/projects/{{ project.slug }}/redis/settings" style="margin-top:16px">
+    <div class="fields-2">
+      <div class="field">
+        <label for="memory_mb">Memory (MB)</label>
+        <input type="text" inputmode="numeric" id="memory_mb" name="memory_mb" value="{{ config.memory_mb }}" aria-describedby="mem_hint">
+        <p class="hint" id="mem_hint">{{ limits[0] }}–{{ limits[1] }} MB. Changing it restarts Redis for a second; the data is kept.</p>
+      </div>
+      <div class="field">
+        <label for="policy">When full</label>
+        <select id="policy" name="policy">
+          {% for key, words in policies.items() %}<option value="{{ key }}"{% if key == config.policy %} selected{% endif %}>{{ words }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label for="env_names">Variable names</label>
+      <input class="mono-input" type="text" id="env_names" name="env_names" value="{{ config.env_names | join(' ') }}" aria-describedby="names_hint">
+      <p class="hint" id="names_hint">The names the app reads the URL from, separated by spaces, for example <span class="mono">REDIS_URL CELERY_BROKER_URL</span>. New names reach the app at its next deploy.</p>
+    </div>
+    <div><button class="btn btn-primary" type="submit">Save</button></div>
+  </form>
+</section>
+
+<section class="danger-zone" aria-labelledby="remove">
+  <h2 id="remove">Remove Redis</h2>
+  <p>Stops Redis now. The app’s next deploy no longer gets {{ config.env_names | join(', ') }}.</p>
+  <form class="form" method="post" action="/projects/{{ project.slug }}/redis/delete">
+    <div class="field">
+      <label class="check"><input type="checkbox" name="delete_data" value="1"> Also delete its data (every key and queued job). This can’t be undone.</label>
+      <p class="hint">Unticked, the data is kept on the server and comes back if you add Redis again.</p>
+    </div>
+    <div><button class="btn btn-danger" type="submit">Remove Redis</button></div>
+  </form>
+</section>
+
+{% else %}
+<div class="empty">
+  <p>No Redis. Add one for a job queue (BullMQ, Celery, RQ, Sidekiq) or a cache. The app receives its address as <span class="mono">REDIS_URL</span>, the name Render uses, so most apps need no change.</p>
+  {% if kept %}<p><strong>Data from an earlier Redis is kept</strong> (<span class="mono">{{ volume }}</span>). Adding Redis brings its keys back.</p>{% endif %}
+</div>
+
+<section class="section" aria-labelledby="add">
+  <h2 id="add">Add Redis</h2>
+  <form class="form" method="post" action="/projects/{{ project.slug }}/redis" style="margin-top:16px">
+    <div class="fields-2">
+      <div class="field">
+        <label for="memory_mb">Memory (MB)</label>
+        <input type="text" inputmode="numeric" id="memory_mb" name="memory_mb" value="{{ defaults.memory_mb }}" aria-describedby="mem_hint">
+        <p class="hint" id="mem_hint">{{ limits[0] }}–{{ limits[1] }} MB. It comes out of this server’s memory, like any container.</p>
+      </div>
+      <div class="field">
+        <label for="policy">When full</label>
+        <select id="policy" name="policy" aria-describedby="policy_hint">
+          {% for key, words in policies.items() %}<option value="{{ key }}"{% if key == defaults.policy %} selected{% endif %}>{{ words }}</option>{% endfor %}
+        </select>
+        <p class="hint" id="policy_hint">Job queues need “never evict”: dropping a key would drop a job.</p>
+      </div>
+    </div>
+    <div class="field">
+      <label for="env_names">Variable names</label>
+      <input class="mono-input" type="text" id="env_names" name="env_names" value="{{ defaults.env_names }}">
+    </div>
+    <div><button class="btn btn-primary" type="submit">Add Redis</button></div>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

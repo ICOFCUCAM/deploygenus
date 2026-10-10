@@ -8,6 +8,9 @@ bad and resolves when it comes back:
   time and serving none of it.
 - Is every worker running? A render worker that exits on start is invisible
   from the website, which keeps working while nothing gets rendered.
+- Is each project's Redis up, and not nearly full? A stopped one is started
+  again here (docs/design/plan-replace-render.md §3.4); with noeviction, a full
+  one refuses new jobs, so it warns at 90% before that happens.
 - Is the disk nearly full? Every other failure on a single host follows it.
 
 A site or worker must fail two checks in a row before it alerts. One failure
@@ -25,12 +28,15 @@ from pathlib import Path
 from deploypro.adapters import containers
 from deploypro.config import Settings
 from deploypro.domain import naming
+from deploypro.domain import redis as redis_rules
 from deploypro.domain.buildplan import DEFAULT_PORT
 from deploypro.engine import disks, health
+from deploypro.engine import redis as redis_engine
 from deploypro.engine.alerts import Alerts
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import processes as process_repo
 from deploypro.repositories import projects as project_repo
+from deploypro.repositories import redis as redis_repo
 
 #: Consecutive failed checks before a site or worker is reported down.
 STRIKES = 2
@@ -50,6 +56,7 @@ class Monitor:
                 continue
             down += await self._check_site(project)
             down += await self._check_workers(project)
+        down += await self._check_redis()
         await self._check_disk()
         return {"down": down}
 
@@ -109,6 +116,67 @@ class Monitor:
                     project=project.slug,
                 )
         return down
+
+    async def _check_redis(self) -> int:
+        """Keep each Redis running, then ask it PING. Independent of
+        production: a project's Redis runs whether or not anything is
+        deployed, so the queue is ready before the first worker."""
+        down = 0
+        for config in await redis_repo.list_all():
+            project = await project_repo.get(config.project_id)
+            start_failed = None
+            try:
+                await redis_engine.ensure_running(project, config, settings=self.settings)
+            except Exception as exc:  # noqa: BLE001 - becomes the alert below
+                start_failed = f"starting it failed ({type(exc).__name__})"
+            problem = await redis_engine.ping(project)
+            if problem and start_failed:
+                problem = f"{problem}; {start_failed}"
+            name = redis_rules.container_name(project.slug)
+            down += await self._record(
+                f"redis:{project.slug}",
+                problem,
+                down_title=f"{project.name}: Redis is down",
+                down_detail=(
+                    f"Redis is not answering: {problem}. Queued jobs wait until it "
+                    "is back; its data is on the volume. DeployPro tries to start "
+                    f"it every minute. `docker logs {name}` says why it stopped."
+                ),
+                up_title=f"{project.name}: Redis is running again",
+                project=project.slug,
+            )
+            if problem is None:
+                await self._check_redis_memory(project, config)
+        return down
+
+    async def _check_redis_memory(self, project, config) -> None:
+        status = await redis_engine.status(project, config)
+        percent = status.used_percent
+        if percent is None:
+            return
+        key = f"redis-memory:{project.slug}"
+        if percent >= redis_rules.WARN_PERCENT:
+            await self.alerts.fire(
+                key,
+                title=f"{project.name}: Redis {percent}% full",
+                detail=(
+                    f"Redis is using {percent}% of its memory. "
+                    + (
+                        "It never evicts, so when full it refuses new jobs with an "
+                        "OOM error. Raise its memory on the Redis page."
+                        if config.policy == "noeviction"
+                        else "It will start evicting keys. Raise its memory on the "
+                        "Redis page if those keys matter."
+                    )
+                ),
+                project=project.slug,
+            )
+        elif percent < redis_rules.WARN_PERCENT - 5:
+            await self.alerts.resolve(
+                key,
+                title=f"{project.name}: Redis back to {percent}% full",
+                project=project.slug,
+            )
 
     async def _check_disk(self) -> None:
         """Each disk a build writes to, alerted separately: the images' own

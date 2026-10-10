@@ -38,6 +38,13 @@
     <span></span>
   </li>
   <li class="summary">
+    <a href="{{ c }}/redis">Redis</a>
+    <div class="summary-body muted">
+      {% if redis %}{{ redis.memory_mb }} MB · <span class="mono">{{ redis.env_names | join(' ') }}</span> · production only{% else %}Off{% endif %}
+    </div>
+    <span></span>
+  </li>
+  <li class="summary">
     <a href="{{ c }}/build">Build</a>
     <div class="summary-body muted">
       {{ framework }} · {{ project.memory_mb }} MB · keep {{ project.keep_warm }} for instant rollback
