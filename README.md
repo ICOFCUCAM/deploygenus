@@ -460,6 +460,36 @@ RUN mkdir -p /data && chown node:node /data     # before USER node
 
 Back volumes up like a database. DeployPro does not snapshot them.
 
+### Redis
+
+A project can have its own Redis (Valkey 8, the engine Render's Key Value runs)
+for a job queue or a cache. **Configuration → Redis → Add Redis**, or:
+
+```bash
+deploypro redis enable cineforge                 # 256 MB, never evicts
+deploypro redis status cineforge
+deploypro redis resize cineforge 512             # data kept
+deploypro redis disable cineforge                # data kept; --delete-data to delete it
+```
+
+- The app receives **`REDIS_URL`**, the name Render uses, in production, its
+  workers and its jobs; more names can be added on the page (`CELERY_BROKER_URL`).
+  Previews never get it, so a branch deploy cannot consume production's queue.
+  A `REDIS_URL` you set yourself under Environment wins.
+- It runs as `deploypro-<project>-redis` on DeployPro's network, with a password
+  and **no published port**: only this server's containers can reach it.
+- **Deploys never restart it**, so queued jobs survive deploys and rollbacks.
+  The monitor checks it every minute, starts it again if it stopped, and alerts
+  if it does not answer or passes 90% of its memory.
+- When full it **refuses new writes** (`noeviction`, which BullMQ requires)
+  rather than silently dropping jobs. A cache can choose to evict instead.
+- Its data is the volume `deploypro_<project>__redis` (append-only file, synced
+  every second). It is in the daily backup; restore it with
+  `deploypro restore-volume <backup> <project> _redis` after removing Redis
+  with its data kept, then add Redis again.
+- To share one Redis with another project, **Show connection URL** on the page
+  and paste it into the other project's Environment.
+
 ### Letting work finish: the stop timeout
 
 ```bash

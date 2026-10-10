@@ -82,7 +82,7 @@
   {% set tab_of = {
       'overview': 'overview', 'deployments': 'deployments',
       'runtime': 'runtime', 'workers': 'runtime', 'jobs': 'runtime',
-      'config': 'config', 'environment': 'config', 'storage': 'config',
+      'config': 'config', 'environment': 'config', 'storage': 'config', 'redis': 'config',
       'build': 'config', 'repository': 'config', 'domains': 'domains'} %}
   {% set tab = tab_of.get(section, section) %}
   <nav class="tabs" aria-label="Project">
@@ -100,7 +100,7 @@
     {% if tab == 'runtime' %}
       {% set subs = [('runtime', 'Summary', nav_base ~ '/runtime'), ('workers', 'Workers', nav_base ~ '/runtime/workers'), ('jobs', 'Jobs', nav_base ~ '/runtime/jobs')] %}
     {% else %}
-      {% set subs = [('config', 'Summary', nav_base ~ '/config'), ('environment', 'Environment', nav_base ~ '/config/environment'), ('storage', 'Storage', nav_base ~ '/config/storage'), ('build', 'Build', nav_base ~ '/config/build'), ('repository', 'Repository', nav_base ~ '/config/repository')] %}
+      {% set subs = [('config', 'Summary', nav_base ~ '/config'), ('environment', 'Environment', nav_base ~ '/config/environment'), ('storage', 'Storage', nav_base ~ '/config/storage'), ('redis', 'Redis', nav_base ~ '/config/redis'), ('build', 'Build', nav_base ~ '/config/build'), ('repository', 'Repository', nav_base ~ '/config/repository')] %}
     {% endif %}
     {% for key, label, href in subs %}
     <a href="{{ href }}"{% if key == section %} aria-current="page"{% endif %}>{{ label }}</a>

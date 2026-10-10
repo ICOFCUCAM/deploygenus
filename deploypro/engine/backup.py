@@ -9,7 +9,7 @@ A backup is exactly those two, written to one directory per run:
     deploypro-20260923T030000Z/
       manifest.json             what is here, with sizes and SHA-256
       deploypro.dump                pg_dump custom format; restore with pg_restore
-      volumes/<docker volume>.tar.gz
+      volumes/<docker volume>.tar.gz     including each project's Redis
 
 It is written under a `.partial` name and renamed only when complete, so a
 backup interrupted halfway never looks like one that finished.
@@ -24,6 +24,7 @@ as the backups, because the dump's variables are unreadable without it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
 import hashlib
 import json
@@ -34,9 +35,12 @@ from pathlib import Path
 
 from deploypro.adapters import containers, db, pgdump
 from deploypro.config import Settings
+from deploypro.domain import redis as redis_rules
 from deploypro.domain.storage import docker_volume_name
+from deploypro.engine import redis as redis_engine
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import projects as project_repo
+from deploypro.repositories import redis as redis_repo
 from deploypro.repositories import volumes as volume_repo
 
 PREFIX = "deploypro-"
@@ -115,6 +119,24 @@ async def _take(settings: Settings, dest: Path) -> BackupResult:
                 files[f"volumes/{gz.name}"] = await asyncio.to_thread(_describe, gz)
                 exported.append(name)
 
+        # Each Redis, explicitly: its volume is not a project Volume (that
+        # would mount it into the app). The AOF is rewritten first so the
+        # copy is compact and consistent; read through Valkey's own image,
+        # which is on the host because Redis runs from it.
+        for config in await redis_repo.list_all():
+            project = await project_repo.get(config.project_id)
+            name = redis_engine.volume_name(project)
+            if name not in present:
+                continue
+            # On failure it is copied as it lies; Valkey loads a truncated tail.
+            with contextlib.suppress(containers.DockerError):
+                await redis_engine.rewrite_aof(project)
+            tar = work / "volumes" / f"{name}.tar"
+            await containers.export_volume(name, config.image, tar)
+            gz = await asyncio.to_thread(_gzip, tar)
+            files[f"volumes/{gz.name}"] = await asyncio.to_thread(_describe, gz)
+            exported.append(name)
+
         manifest = {
             "format": 1,
             "taken_at": stamp,
@@ -184,7 +206,15 @@ async def restore_volume(backup: Path, *, project_slug: str, volume: str) -> str
     if not gz.exists():
         raise FileNotFoundError(f"{backup.name} has no copy of {name}")
     project = await project_repo.get_by_slug(project_slug)
-    image = await _any_image(project)
+    if volume == redis_rules.VOLUME_KEY:
+        # A Redis volume: restored through Valkey's image, which needs no app
+        # build on the host. Stop Redis first (Remove, keeping the data) or
+        # it rewrites the files as they arrive; add it back afterwards.
+        config = await redis_repo.get(project.id)
+        image = config.image if config else redis_rules.DEFAULT_IMAGE
+        await containers.ensure_image(image)
+    else:
+        image = await _any_image(project)
     if image is None:
         raise RuntimeError(f"{project_slug} has no image on this host to restore through")
     await containers.ensure_volume(

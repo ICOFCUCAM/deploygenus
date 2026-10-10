@@ -22,6 +22,7 @@ from deploypro.domain.errors import DeployProError
 from deploypro.routers import deployments, github, health, processes, projects, webhooks
 from deploypro.web import github as dashboard_github
 from deploypro.web import pages as dashboard_pages
+from deploypro.web import redis as dashboard_redis
 from deploypro.web import routes as dashboard
 
 logger = logging.getLogger("deploypro")
@@ -74,6 +75,7 @@ app.include_router(webhooks.router)
 app.include_router(github.router)
 # Before the dashboard, whose routes are the least specific.
 app.include_router(dashboard_github.router)
+app.include_router(dashboard_redis.router)
 app.include_router(dashboard.router)
 # Last, because it owns the root path and `/projects/{slug}`, the least
 # specific routes: `/projects/new` above must be matched first.

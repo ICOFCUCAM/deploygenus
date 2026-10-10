@@ -18,6 +18,7 @@ from deploypro.domain.buildplan import DEFAULT_PORT
 from deploypro.domain.errors import Conflict, DeployFailed
 from deploypro.domain.models import Deployment, EnvTarget, LogStream, Project
 from deploypro.engine import environment, health, storage
+from deploypro.engine import redis as redis_engine
 from deploypro.engine.logs import LogWriter
 from deploypro.repositories import deployments as deployment_repo
 from deploypro.repositories import volumes as volume_repo
@@ -55,12 +56,15 @@ async def launch(
         project.id,
         target=target,
         key=settings.master_key,
-        injected=environment.platform_variables(
-            short_id=deployment.short_id,
-            git_sha=deployment.git_sha,
-            url=url,
-            target=target,
-        ),
+        injected={
+            **await redis_engine.variables(project, target=target, settings=settings),
+            **environment.platform_variables(
+                short_id=deployment.short_id,
+                git_sha=deployment.git_sha,
+                url=url,
+                target=target,
+            ),
+        },
     )
     env_file = environment.write_runtime_env_file(env, workdir / "runtime.env")
 
